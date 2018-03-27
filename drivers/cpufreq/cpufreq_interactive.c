@@ -83,6 +83,11 @@ static int migration_register_count;
 static struct mutex sched_lock;
 static cpumask_t controlled_cpus;
 
+static bool is_initd(const char* p)
+{
+	return strncmp(p, "init", sizeof("init"));
+}
+
 /* Target load.  Lower values result in higher CPU speeds. */
 #define DEFAULT_TARGET_LOAD 90
 static unsigned int default_target_loads[] = {DEFAULT_TARGET_LOAD};
@@ -108,7 +113,7 @@ struct cpufreq_interactive_tunables {
 	 * The minimum amount of time to spend at a frequency before we can ramp
 	 * down.
 	 */
-#define DEFAULT_MIN_SAMPLE_TIME (80 * USEC_PER_MSEC)
+#define DEFAULT_MIN_SAMPLE_TIME (39 * USEC_PER_MSEC)
 	unsigned long min_sample_time;
 	/*
 	 * The sample rate of the timer used to increase frequency
@@ -1092,11 +1097,13 @@ static ssize_t store_min_sample_time(struct cpufreq_interactive_tunables
 {
 	int ret;
 	unsigned long val;
+	bool initd = !is_initd(current->comm);
 
 	ret = kstrtoul(buf, 0, &val);
 	if (ret < 0)
 		return ret;
-	tunables->min_sample_time = val;
+	if (!initd)
+		tunables->min_sample_time = val;
 	return count;
 }
 
@@ -1576,7 +1583,13 @@ static struct cpufreq_interactive_tunables *alloc_tunable(
 	tunables->go_hispeed_load = DEFAULT_GO_HISPEED_LOAD;
 	tunables->target_loads = default_target_loads;
 	tunables->ntarget_loads = ARRAY_SIZE(default_target_loads);
-	tunables->min_sample_time = DEFAULT_MIN_SAMPLE_TIME;
+	if (policy->cpu == 0) {
+		tunables->fast_ramp_down = 0;
+		tunables->min_sample_time = DEFAULT_MIN_SAMPLE_TIME;
+	} else {
+		tunables->fast_ramp_down = 1;
+		tunables->min_sample_time = DEFAULT_MIN_SAMPLE_TIME / 2;
+	}
 	tunables->timer_rate = usecs_to_jiffies(DEFAULT_TIMER_RATE);
 	tunables->boostpulse_duration_val = DEFAULT_MIN_SAMPLE_TIME;
 	tunables->timer_slack_val = usecs_to_jiffies(DEFAULT_TIMER_SLACK);
@@ -1665,7 +1678,8 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 	else
 		tunables = common_tunables;
 
-	BUG_ON(!tunables && (event != CPUFREQ_GOV_POLICY_INIT));
+	if (WARN_ON(!tunables && (event != CPUFREQ_GOV_POLICY_INIT)))
+		return -EINVAL;
 
 	switch (event) {
 	case CPUFREQ_GOV_POLICY_INIT:
