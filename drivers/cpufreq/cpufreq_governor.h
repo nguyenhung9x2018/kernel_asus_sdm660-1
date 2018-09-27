@@ -126,6 +126,7 @@ static void *get_cpu_dbs_info_s(int cpu)				\
  * cdbs: common dbs
  * od_*: On-demand governor
  * cs_*: Conservative governor
+ * ac_*: Alucard governor
  * zz_*: ZZMoove governor
  */
 
@@ -174,6 +175,15 @@ struct cs_cpu_dbs_info_s {
 	unsigned int requested_freq;
 };
 
+struct ac_cpu_dbs_info_s {
+	struct cpu_dbs_info cdbs;
+	struct cpufreq_frequency_table *freq_table;
+	unsigned int up_rate:1;
+	unsigned int down_rate:1;
+	unsigned int min_index;
+	unsigned int max_index;
+};
+
 struct zz_cpu_dbs_info_s {
 	struct cpu_dbs_info cdbs;
 	struct cpufreq_frequency_table *freq_table;
@@ -204,6 +214,18 @@ struct cs_dbs_tuners {
 	unsigned int boost_count;
 };
 
+struct ac_dbs_tuners {
+	unsigned int ignore_nice_load;
+	unsigned int sampling_rate;
+	int inc_cpu_load_at_min_freq;
+	int inc_cpu_load;
+	int dec_cpu_load_at_min_freq;
+	int dec_cpu_load;
+	int freq_responsiveness;
+	unsigned int cpus_up_rate;
+	unsigned int cpus_down_rate;
+};
+
 struct zz_dbs_tuners {
 	unsigned int ignore_nice_load;
 	unsigned int sampling_rate;
@@ -226,7 +248,8 @@ struct common_dbs_data {
 	/* Common across governors */
 	#define GOV_ONDEMAND		0
 	#define GOV_CONSERVATIVE	1
-	#define GOV_ZZMOOVE		2
+	#define GOV_ALUCARD		2
+	#define GOV_ZZMOOVE		3
 	int governor;
 	struct attribute_group *attr_group_gov_sys; /* one governor - system */
 	struct attribute_group *attr_group_gov_pol; /* one governor - policy */
@@ -285,6 +308,12 @@ struct od_ops {
 	unsigned int (*powersave_bias_target)(struct cpufreq_policy *policy,
 			unsigned int freq_next, unsigned int relation);
 	void (*freq_increase)(struct cpufreq_policy *policy, unsigned int freq);
+};
+
+struct ac_ops {
+	void (*get_cpu_frequency_table)(int cpu);
+	void (*get_cpu_frequency_table_minmax)(struct cpufreq_policy *policy, 
+			int cpu);
 };
 
 static inline int delay_for_sampling_rate(unsigned int sampling_rate)
