@@ -461,7 +461,7 @@ static ssize_t screengesture_store(struct kobject *kobj, struct kobj_attribute *
 static struct kobj_attribute screengesture_attribute = __ATTR(gesture_node, 0664, screengesture_show,
                                                    screengesture_store);
 
-int create_gesture_node() {
+int create_gesture_node(void) {
 	int error = 0, error2 = 0;
 
         gesture_kobject = kobject_create_and_add("touchpanel",
@@ -484,7 +484,7 @@ int create_gesture_node() {
         return error;
 }
 
-void destroy_gesture() {
+void destroy_gesture(void) {
 	kobject_put(gesture_kobject);
 }
 
