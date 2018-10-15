@@ -17,39 +17,31 @@ on property:persist.spectrum.profile=0
 
     # Little Cluster
     write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor interactive
-    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq "300000"
-    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq "1612800"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/min_sample_time "42000"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/go_hispeed_load "80"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/above_hispeed_delay "15000 1113600:25000"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/timer_rate "20000"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/timer_slack "30000"
-    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/target_loads "60 300000:15 633600:25 902400:35 1113600:45 1401600:60 1536000:70 1612800:85"    
+    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/target_loads "15 633600:25 902400:35 1113600:45 1401600:60 1536000:70 1612800:85"    
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/hispeed_freq "1113600"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/boost "0"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/boostpulse_duration "80000"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/fast_ramp_down "1"
-    ##write /sys/devices/system/cpu/cpu0/cpufreq/interactive/powersave_bias "1"
-    ##write /sys/devices/system/cpu/cpu0/cpufreq/interactive/screen_off_maxfreq "1113600"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/align_windows "1"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/max_freq_hysteresis "80000"
 
     # Big Cluster
     write /sys/devices/system/cpu/cpu4/cpufreq/scaling_governor interactive
-    write /sys/devices/system/cpu/cpu4/cpufreq/scaling_min_freq "300000"
-    write /sys/devices/system/cpu/cpu4/cpufreq/scaling_max_freq "1804800"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/min_sample_time "35000"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/go_hispeed_load "85"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/above_hispeed_delay "15000 1401600:25000"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/timer_rate "25000"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/timer_slack "30000"
-    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/target_loads "60 300000:15 633600:25 902400:35 1113600:45 1401600:60 1747200:70 1804800:85"
+    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/target_loads "35 1113600:45 1401600:60 1747200:70 1804800:85"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/hispeed_freq "1401600"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/boost "0"
-	write /sys/devices/system/cpu/cpu4/cpufreq/interactive/boostpulse_duration "0"
+    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/boostpulse_duration "0"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/fast_ramp_down "1"
-    ##write /sys/devices/system/cpu/cpu4/cpufreq/interactive/powersave_bias "1"
-    ##write /sys/devices/system/cpu/cpu4/cpufreq/interactive/screen_off_maxfreq "1113600"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/align_windows "1"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/max_freq_hysteresis "80000"
 
@@ -71,7 +63,7 @@ on property:persist.spectrum.profile=1
 	
     # Little Cluster
     write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor interactive
-    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq "633600"
+    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq "902400"
     write /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq "1612800"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/min_sample_time "39000"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/go_hispeed_load "95"
@@ -79,7 +71,7 @@ on property:persist.spectrum.profile=1
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/timer_rate "20000"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/timer_slack "80000"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/target_loads "85 1536000:95"
-    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/hispeed_freq "902400"
+    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/hispeed_freq "1113600"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/boost "0"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/boostpulse_duration "80000"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/fast_ramp_down "1"
@@ -96,7 +88,7 @@ on property:persist.spectrum.profile=1
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/timer_rate "20000"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/timer_slack "80000"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/target_loads "85 1401600:90 1804800:95"
-    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/hispeed_freq "1401600"
+    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/hispeed_freq "1747200"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/boost "0"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/boostpulse_duration "0"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/fast_ramp_down "1"
@@ -121,8 +113,6 @@ on property:persist.spectrum.profile=2
 	
     # Little Cluster
     write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor alucard
-    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq "300000"
-    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq "1113600"
     write /sys/devices/system/cpu/cpu0/cpufreq/alucard/align_windows 1
     write /sys/devices/system/cpu/cpu0/cpufreq/alucard/freq_responsiveness 902400
     write /sys/devices/system/cpu/cpu0/cpufreq/alucard/io_is_busy 0
@@ -130,8 +120,6 @@ on property:persist.spectrum.profile=2
 
     # Big Cluster
     write /sys/devices/system/cpu/cpu4/cpufreq/scaling_governor chill
-    write /sys/devices/system/cpu/cpu4/cpufreq/scaling_min_freq "300000"
-    write /sys/devices/system/cpu/cpu4/cpufreq/scaling_max_freq "1401600"
     write /sys/devices/system/cpu/cpu4/cpufreq/chill/boost_enabled 0
     write /sys/devices/system/cpu/cpu4/cpufreq/chill/down_threshold 40
     write /sys/devices/system/cpu/cpu4/cpufreq/chill/down_threshold_suspended 45
@@ -159,14 +147,14 @@ on property:persist.spectrum.profile=3
     # Little Cluster
     write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor interactive
     write /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq "902400"
-    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq "1843200"
+    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq "1612800"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/min_sample_time "55000"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/go_hispeed_load "65"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/above_hispeed_delay "15000"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/timer_rate "20000"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/timer_slack "30000"
-    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/target_loads "60 902400:25 1113600:40 1401600:50 1536000:60 1612800:70 1747200:80 1843200:86"
-    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/hispeed_freq "1747200"
+    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/target_loads "40 902400:50 1113600:60 1401600:70 1536000:80 1612800:86"
+    write /sys/devices/system/cpu/cpu0/cpufreq/interactive/hispeed_freq "1536000"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/boost "0"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/boostpulse_duration "0"
     write /sys/devices/system/cpu/cpu0/cpufreq/interactive/fast_ramp_down "0"
@@ -176,14 +164,14 @@ on property:persist.spectrum.profile=3
     # Big Cluster
     write /sys/devices/system/cpu/cpu4/cpufreq/scaling_governor interactive
     write /sys/devices/system/cpu/cpu4/cpufreq/scaling_min_freq "1113600"
-    write /sys/devices/system/cpu/cpu4/cpufreq/scaling_max_freq "2150400"
+    write /sys/devices/system/cpu/cpu4/cpufreq/scaling_max_freq "1804800"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/min_sample_time "55000"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/go_hispeed_load "65"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/above_hispeed_delay "15000"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/timer_rate "20000"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/timer_slack "30000"
-    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/target_loads "60 1113600:33 1401600:47 1747200:57 1804800:67 1958400:80 2150400:87"
-    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/hispeed_freq "1958400"
+    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/target_loads "50 1113600:57 1401600:67 1747200:80 1804800:87"
+    write /sys/devices/system/cpu/cpu4/cpufreq/interactive/hispeed_freq "1747200"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/boost "0"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/boostpulse_duration "80000"
     write /sys/devices/system/cpu/cpu4/cpufreq/interactive/fast_ramp_down "0"
@@ -199,4 +187,4 @@ on property:persist.spectrum.profile=3
 
     # I/O Scheduler
     write /sys/block/mmcblk0/queue/read_ahead_kb 2048
-    write /sys/block/mmcblk0/queue/scheduler cfq
+    write /sys/block/mmcblk0/queue/scheduler bfq
