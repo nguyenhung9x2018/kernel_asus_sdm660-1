@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2018 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -25,6 +25,26 @@
 #include "battery.h"
 #include "step-chg-jeita.h"
 #include "storm-watch.h"
+//Huaqin added by tangqingyong at 20180206 for USB alert start
+#include <linux/switch.h>
+#include <linux/qpnp/qpnp-adc.h>
+//Huaqin added by tangqingyong at 20180206 for USB alert end
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 start */
+#include "fg-core.h"
+#include <linux/gpio.h>
+/* Huaqin add for ZQL1650-26 by diganyun at 2018/02/06 start */
+#include <linux/fs.h>
+/* Huaqin add for ZQL1650-26 by diganyun at 2018/02/06 end */
+#include <linux/alarmtimer.h>
+#include <linux/wakelock.h>
+#include <linux/unistd.h>
+#include <linux/fcntl.h>
+#include <linux/slab.h>
+#include <linux/uaccess.h>
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 start */
+ /* Huaqin add for ZQL1650-76 Report battery temperature to upper by gaochao at 2018/02/07 start */
+#define	START_REPORT_BAT_TEMPRATURE	620
+/* Huaqin add for ZQL1650-76 Report battery temperature to upper by gaochao at 2018/02/07 end */
 
 #define smblib_err(chg, fmt, ...)		\
 	pr_err("%s: %s: " fmt, chg->name,	\
@@ -39,6 +59,101 @@
 			pr_debug("%s: %s: " fmt, chg->name,	\
 				__func__, ##__VA_ARGS__);	\
 	} while (0)
+
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 start */
+#define CHARGER_TAG "[BAT][CHG]"
+#define ERROR_TAG "[ERR]"
+ #define printk(...)  printk(KERN_ERR CHARGER_TAG __VA_ARGS__)
+#define CHG_DBG(...)  printk(KERN_ERR CHARGER_TAG __VA_ARGS__)
+#define CHG_DBG_E(...)  printk(KERN_ERR CHARGER_TAG ERROR_TAG __VA_ARGS__)
+extern struct smb_charger *smbchg_dev;
+/* Huaqin add for ZQL1650-68 systme suspend 1 min run sw jeita by fangaijun at 2018/02/06 start */
+extern struct timespec last_jeita_time;
+static struct alarm bat_alarm;
+/* Huaqin add for ZQL1650-68 systme suspend 1 min run sw jeita by fangaijun at 2018/02/06 end */
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 start */
+extern struct gpio_control *global_gpio;	//global gpio_control
+static int ASUS_ADAPTER_ID = 0;
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 end */
+//Huaqin added by tangqingyong at 20180206 for USB alert start
+#define CHG_ALERT_HOT_NTC_VOLTAFE 237229 //70degC
+#define CHG_ALERT_WARM_NTC_VOLTAGE 320588 //60degC
+#define        THM_ALERT_NONE          0 //temp good
+#define        THM_ALERT_NO_AC         1 //temp hot with otg
+#define        THM_ALERT_WITH_AC       2 //temp hot with AC
+extern struct switch_dev usb_alert_dev;
+static bool usb_alert_usb_otg_disable=false;
+static bool need_replugin_usb=false;
+static bool usb_otg_present=false;
+void smblib_asus_monitor_start(struct smb_charger *chg, int time);
+//Huaqin added by tangqingyong at 20180206 for USB alert end
+//Huaqin added by tangqingyong at 20180212 for usb_otg start
+extern struct switch_dev usb_otg_dev;
+//Huaqin added by tangqingyong at 20180212 for usb_otg end
+ /* Huaqin add for ZQL1650-26 by diganyun at 2018/02/06 start */
+extern bool demo_app_property_flag;
+bool smartchg_stop_flag = 0;
+/* Huaqin add for ZQL1650-26 by diganyun at 2018/02/06 end */
+/* Huaqin add for ZQL1650-281 by diganyun at 2018/02/08 start */
+extern int charger_limit_enable_flag;
+extern int charger_limit_value;
+/* Huaqin add for ZQL1650-281 by diganyun at 2018/02/08 end */
+static bool asus_flow_processing = 0;
+extern int BR_countrycode;
+int asus_get_prop_batt_temp(struct smb_charger *chg);
+int asus_get_prop_batt_volt(struct smb_charger *chg);
+int asus_get_prop_batt_capacity(struct smb_charger *chg);
+int asus_get_prop_batt_health(struct smb_charger *chg);
+int asus_get_prop_usb_present(struct smb_charger *chg);
+enum ADAPTER_ID {
+	NONE = 0,
+	ASUS_750K,
+	ASUS_200K,
+	PB,
+	OTHERS,
+	ADC_NOT_READY,
+};
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 start */
+static char *asus_id[] = {
+	"NONE",
+	"ASUS_750K",
+	"ASUS_200K",
+	"PB",
+	"OTHERS",
+	"ADC_NOT_READY"
+};
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 end */
+char *health_type[] = {
+	"GOOD",
+	"COLD",
+	"COOL",
+	"WARM",
+	"OVERHEAT",
+	"OVERVOLT",
+	"OTHERS"
+};
+static void asus_smblib_rerun_aicl(struct smb_charger *chg)
+{
+	smblib_masked_write(chg, USBIN_AICL_OPTIONS_CFG_REG,                          //reg=1380   bit2=0     USBIN_AICL_EN=disable
+			USBIN_AICL_EN_BIT, 0);
+	/* Add a delay so that AICL successfully clears */
+	msleep(50);
+	printk("enter mid  asus_smblib_rerun_aicl\n");
+	smblib_masked_write(chg, USBIN_AICL_OPTIONS_CFG_REG,                          //reg=1380   bit2=0     USBIN_AICL_EN=Enable
+			USBIN_AICL_EN_BIT, USBIN_AICL_EN_BIT);
+}
+extern struct wake_lock asus_chg_lock;
+void asus_smblib_stay_awake(struct smb_charger *chg)
+{
+	printk("%s: ASUS set smblib_stay_awake\n", __func__);
+	wake_lock(&asus_chg_lock);
+}
+void asus_smblib_relax(struct smb_charger *chg)
+{
+	printk("%s: ASUS set smblib_relax\n", __func__);
+	wake_unlock(&asus_chg_lock);
+}
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 end */
 
 static bool is_secure(struct smb_charger *chg, int addr)
 {
@@ -642,12 +757,16 @@ int smblib_mapping_cc_delta_from_field_value(struct smb_chg_param *param,
 
 static void smblib_uusb_removal(struct smb_charger *chg)
 {
-	int rc;
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 start */
+	int rc,val;
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 end */
 	struct smb_irq_data *data;
 	struct storm_watch *wdata;
 
 	cancel_delayed_work_sync(&chg->pl_enable_work);
-
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 start */
+	printk("enter smblib_uusb_removal\n");
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 end */
 	rc = smblib_request_dpdm(chg, false);
 	if (rc < 0)
 		smblib_err(chg, "Couldn't to disable DPDM rc=%d\n", rc);
@@ -669,7 +788,6 @@ static void smblib_uusb_removal(struct smb_charger *chg)
 	vote(chg->pl_enable_votable_indirect, USBIN_I_VOTER, false, 0);
 	vote(chg->pl_enable_votable_indirect, USBIN_V_VOTER, false, 0);
 	vote(chg->usb_icl_votable, SW_QC3_VOTER, false, 0);
-	vote(chg->usb_icl_votable, USBIN_USBIN_BOOST_VOTER, false, 0);
 	vote(chg->hvdcp_hw_inov_dis_votable, OV_VOTER, false, 0);
 
 	cancel_delayed_work_sync(&chg->hvdcp_detect_work);
@@ -707,6 +825,51 @@ static void smblib_uusb_removal(struct smb_charger *chg)
 	if (rc < 0)
 		smblib_err(chg,
 			"Couldn't un-vote DCP from USB ICL rc=%d\n", rc);
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 start */
+	if (gpio_is_valid(global_gpio->ADC_SW_EN)) {
+		printk("smblib_uusb_removal gpio_is_valid gpio_ADC_SW_EN=%d\n",global_gpio->ADC_SW_EN);
+		val = gpio_get_value(global_gpio->ADC_SW_EN);
+		if(val==1){
+			rc = gpio_direction_output(global_gpio->ADC_SW_EN, 0);
+			if (rc)
+				printk("%s: failed to pull-low ADC_SW_EN-gpios59\n", __func__);
+			else
+				printk("%s: Pull low USBSW_S\n", __func__);
+		}
+		else
+			printk("%s: get USBSW_S gpio val %d\n", __func__,val);
+	}
+	val = gpio_get_value(global_gpio->ADCPWREN_PMI_GP1);
+	if(val==1){
+		rc = gpio_direction_output(global_gpio->ADCPWREN_PMI_GP1, 0);
+		if (rc)
+			printk("%s: failed to pull-low ADCPWREN_PMI_GP1-gpios34\n", __func__);
+		else
+			printk("%s: Pull low ADC_VH_EN\n", __func__);
+	}
+	else
+		printk("%s: get ADC_VH_EN gpio val %d\n", __func__,val);
+	cancel_delayed_work(&chg->asus_chg_flow_work);
+	cancel_delayed_work(&chg->asus_adapter_adc_work);
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 end */
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 start */
+ 	cancel_delayed_work(&chg->asus_min_monitor_work);
+	cancel_delayed_work(&chg->asus_batt_RTC_work);
+#if 0
+	cancel_delayed_work(&chg->asus_set_flow_flag_work);
+	cancel_delayed_work(&chg->asus_rerun_DRP_work);//WA for
+#endif
+	alarm_cancel(&bat_alarm);
+	asus_flow_processing = 0;
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 start */
+	ASUS_ADAPTER_ID = 0;
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 start */
+//Huaqin added by tangqingyong at 20180206 for USB alert start
+	need_replugin_usb=true;
+//Huaqin added by tangqingyong at 20180206 for USB alert end
+	printk("end smblib_uusb_removal\n");
+	asus_smblib_relax(smbchg_dev);
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 end */
 }
 
 void smblib_suspend_on_debug_battery(struct smb_charger *chg)
@@ -1429,6 +1592,14 @@ static int _smblib_vbus_regulator_enable(struct regulator_dev *rdev)
 		if (rc < 0)
 			smblib_err(chg, "Couldn't enable OTG rc=%d\n", rc);
 	}
+//Huaqin added by tangqingyong at 20180206 for USB alert start
+	usb_otg_present=true;
+	smblib_asus_monitor_start(smbchg_dev, 10000);
+	asus_smblib_stay_awake(chg);
+//Huaqin added by tangqingyong at 20180206 for USB alert end
+//Huaqin added by tangqingyong at 20180212 for usb_otg start
+	switch_set_state(&usb_otg_dev,1);
+//Huaqin added by tangqingyong at 20180212 for usb_otg end
 
 	return rc;
 }
@@ -1453,8 +1624,6 @@ int smblib_vbus_regulator_enable(struct regulator_dev *rdev)
 	rc = _smblib_vbus_regulator_enable(rdev);
 	if (rc >= 0)
 		chg->otg_en = true;
-	else
-		vote(chg->usb_icl_votable, USBIN_USBIN_BOOST_VOTER, false, 0);
 
 unlock:
 	mutex_unlock(&chg->otg_oc_lock);
@@ -1485,6 +1654,17 @@ static int _smblib_vbus_regulator_disable(struct regulator_dev *rdev)
 	}
 
 	smblib_dbg(chg, PR_OTG, "start 1 in 8 mode\n");
+//Huaqin added by tangqingyong at 20180206 for USB alert start
+	usb_otg_present=false;
+	need_replugin_usb=true;
+	cancel_delayed_work(&chg->asus_min_monitor_work);
+	cancel_delayed_work(&chg->asus_batt_RTC_work);
+	alarm_cancel(&bat_alarm);
+	asus_smblib_relax(smbchg_dev);
+//Huaqin added by tangqingyong at 20180206 for USB alert end
+//Huaqin added by tangqingyong at 20180212 for usb_otg start
+	switch_set_state(&usb_otg_dev,0);
+//Huaqin added by tangqingyong at 20180212 for usb_otg end
 	rc = smblib_masked_write(chg, OTG_ENG_OTG_CFG_REG,
 				 ENG_BUCKBOOST_HALT1_8_MODE_BIT, 0);
 	if (rc < 0) {
@@ -1539,6 +1719,16 @@ int smblib_get_prop_input_suspend(struct smb_charger *chg,
 	return 0;
 }
 
+/* Huaqin add for ZQL1650-189 by diganyun at 2018/02/01 start */
+int smblib_get_prop_charging_enabled(struct smb_charger *chg,
+				  union power_supply_propval *val)
+{
+	val->intval
+		= !((get_client_vote(chg->usb_icl_votable, USER_VOTER) == 0)
+		 && get_client_vote(chg->dc_suspend_votable, USER_VOTER));
+	return 0;
+}
+/* Huaqin add for ZQL1650-189 by diganyun at 2018/02/01 end */
 int smblib_get_prop_batt_present(struct smb_charger *chg,
 				union power_supply_propval *val)
 {
@@ -1717,8 +1907,7 @@ int smblib_get_prop_batt_health(struct smb_charger *chg,
 		   stat);
 
 	if (stat & CHARGER_ERROR_STATUS_BAT_OV_BIT) {
-		rc = smblib_get_prop_from_bms(chg,
-				POWER_SUPPLY_PROP_VOLTAGE_NOW, &pval);
+		rc = smblib_get_prop_batt_voltage_now(chg, &pval);
 		if (!rc) {
 			/*
 			 * If Vbatt is within 40mV above Vfloat, then don't
@@ -1776,6 +1965,45 @@ int smblib_get_prop_input_current_limited(struct smb_charger *chg,
 	return 0;
 }
 
+int smblib_get_prop_batt_voltage_now(struct smb_charger *chg,
+				     union power_supply_propval *val)
+{
+	int rc;
+
+	if (!chg->bms_psy)
+		return -EINVAL;
+
+	rc = power_supply_get_property(chg->bms_psy,
+				       POWER_SUPPLY_PROP_VOLTAGE_NOW, val);
+	return rc;
+}
+
+int smblib_get_prop_batt_current_now(struct smb_charger *chg,
+				     union power_supply_propval *val)
+{
+	int rc;
+
+	if (!chg->bms_psy)
+		return -EINVAL;
+
+	rc = power_supply_get_property(chg->bms_psy,
+				       POWER_SUPPLY_PROP_CURRENT_NOW, val);
+	return rc;
+}
+
+int smblib_get_prop_batt_temp(struct smb_charger *chg,
+			      union power_supply_propval *val)
+{
+	int rc;
+
+	if (!chg->bms_psy)
+		return -EINVAL;
+
+	rc = power_supply_get_property(chg->bms_psy,
+				       POWER_SUPPLY_PROP_TEMP, val);
+	return rc;
+}
+
 int smblib_get_prop_batt_charge_done(struct smb_charger *chg,
 					union power_supply_propval *val)
 {
@@ -1811,17 +2039,16 @@ int smblib_get_prop_charge_qnovo_enable(struct smb_charger *chg,
 	return 0;
 }
 
-int smblib_get_prop_from_bms(struct smb_charger *chg,
-				enum power_supply_property psp,
-				union power_supply_propval *val)
+int smblib_get_prop_batt_charge_counter(struct smb_charger *chg,
+				     union power_supply_propval *val)
 {
 	int rc;
 
 	if (!chg->bms_psy)
 		return -EINVAL;
 
-	rc = power_supply_get_property(chg->bms_psy, psp, val);
-
+	rc = power_supply_get_property(chg->bms_psy,
+				       POWER_SUPPLY_PROP_CHARGE_COUNTER, val);
 	return rc;
 }
 
@@ -1853,6 +2080,32 @@ int smblib_set_prop_input_suspend(struct smb_charger *chg,
 	return rc;
 }
 
+/* Huaqin add for ZQL1650-189 by diganyun at 2018/02/01 start */
+int smblib_set_prop_charging_enabled(struct smb_charger *chg,
+				  const union power_supply_propval *val)
+{
+	int rc;
+ 	/* vote 0mA when suspended */
+	rc = vote(chg->usb_icl_votable, USER_VOTER, !(bool)val->intval, 0);
+	if (rc < 0) {
+		smblib_err(chg, "Couldn't vote to %s USB rc=%d\n",
+			(bool)val->intval ? "suspend" : "resume", rc);
+		return rc;
+	}
+ 	rc = vote(chg->dc_suspend_votable, USER_VOTER, !(bool)val->intval, 0);
+	if (rc < 0) {
+		smblib_err(chg, "Couldn't vote to %s DC rc=%d\n",
+			(bool)val->intval ? "suspend" : "resume", rc);
+		return rc;
+	}
+/* Huaqin add for ZQL1650-26 by diganyun at 2018/02/06 start */
+	smartchg_stop_flag = !(bool)val->intval;
+	CHG_DBG("%s : smartchg_stop_flag = %d\n",__func__,smartchg_stop_flag);
+/* Huaqin add for ZQL1650-26 by diganyun at 2018/02/06 end */
+	power_supply_changed(chg->batt_psy);
+	return rc;
+}
+/* Huaqin add for ZQL1650-189 by diganyun at 2018/02/01 end */
 int smblib_set_prop_batt_capacity(struct smb_charger *chg,
 				  const union power_supply_propval *val)
 {
@@ -2201,7 +2454,6 @@ int smblib_get_prop_usb_voltage_max(struct smb_charger *chg,
 {
 	switch (chg->real_charger_type) {
 	case POWER_SUPPLY_TYPE_USB_HVDCP:
-	case POWER_SUPPLY_TYPE_USB_HVDCP_3:
 	case POWER_SUPPLY_TYPE_USB_PD:
 		if (chg->smb_version == PM660_SUBTYPE)
 			val->intval = MICRO_9V;
@@ -2219,6 +2471,12 @@ int smblib_get_prop_usb_voltage_max(struct smb_charger *chg,
 int smblib_get_prop_usb_voltage_now(struct smb_charger *chg,
 				    union power_supply_propval *val)
 {
+	int rc = 0;
+
+	rc = smblib_get_prop_usb_present(chg, val);
+	if (rc < 0 || !val->intval)
+		return rc;
+
 	if (!chg->iio.usbin_v_chan ||
 		PTR_ERR(chg->iio.usbin_v_chan) == -EPROBE_DEFER)
 		chg->iio.usbin_v_chan = iio_channel_get(chg->dev, "usbin_v");
@@ -2485,7 +2743,15 @@ int smblib_get_prop_die_health(struct smb_charger *chg,
 
 #define SDP_CURRENT_UA			500000
 #define CDP_CURRENT_UA			1500000
-#define DCP_CURRENT_UA			1500000
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 start */
+#ifdef HQ_BUILD_FACTORY
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 start */
+#define DCP_CURRENT_UA			2000000
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 end */
+#else
+#define DCP_CURRENT_UA			500000
+#endif
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 end */
 #define HVDCP_CURRENT_UA		3000000
 #define TYPEC_DEFAULT_CURRENT_UA	900000
 #define TYPEC_MEDIUM_CURRENT_UA		1500000
@@ -2503,6 +2769,9 @@ static int get_rp_based_dcp_current(struct smb_charger *chg, int typec_mode)
 	/* fall through */
 	default:
 		rp_ua = DCP_CURRENT_UA;
+/* Huaqin modify for ZQL1650-70 optimize Adapter ID by fangaijun at 2018/02/9 start */
+		printk("enter get_rp_based_dcp_current  rp_ua=%d\n",rp_ua);
+/* Huaqin modify for ZQL1650-70 optimize Adapter ID by fangaijun at 2018/02/9 end */
 	}
 
 	return rp_ua;
@@ -2538,6 +2807,9 @@ static int smblib_handle_usb_current(struct smb_charger *chg,
 			 */
 			typec_mode = smblib_get_prop_typec_mode(chg);
 			rp_ua = get_rp_based_dcp_current(chg, typec_mode);
+/* Huaqin modify for ZQL1650-70 optimize Adapter ID by fangaijun at 2018/02/9 start */
+			printk("enter  smblib_handle_usb_current rp_ua1=%d\n",rp_ua);
+/* Huaqin modify for ZQL1650-70 optimize Adapter ID by fangaijun at 2018/02/9 end */
 			rc = vote(chg->usb_icl_votable, LEGACY_UNKNOWN_VOTER,
 								true, rp_ua);
 			if (rc < 0)
@@ -2626,21 +2898,19 @@ int smblib_set_prop_typec_power_role(struct smb_charger *chg,
 		return -EINVAL;
 	}
 
-	if (chg->wa_flags & TYPEC_PBS_WA_BIT) {
-		if (power_role == UFP_EN_CMD_BIT) {
-			/* disable PBS workaround when forcing sink mode */
-			rc = smblib_write(chg, TM_IO_DTEST4_SEL, 0x0);
-			if (rc < 0) {
-				smblib_err(chg, "Couldn't write to TM_IO_DTEST4_SEL rc=%d\n",
-					rc);
-			}
-		} else {
-			/* restore it back to 0xA5 */
-			rc = smblib_write(chg, TM_IO_DTEST4_SEL, 0xA5);
-			if (rc < 0) {
-				smblib_err(chg, "Couldn't write to TM_IO_DTEST4_SEL rc=%d\n",
-					rc);
-			}
+	if (power_role == UFP_EN_CMD_BIT) {
+		/* disable PBS workaround when forcing sink mode */
+		rc = smblib_write(chg, TM_IO_DTEST4_SEL, 0x0);
+		if (rc < 0) {
+			smblib_err(chg, "Couldn't write to TM_IO_DTEST4_SEL rc=%d\n",
+				rc);
+		}
+	} else {
+		/* restore it back to 0xA5 */
+		rc = smblib_write(chg, TM_IO_DTEST4_SEL, 0xA5);
+		if (rc < 0) {
+			smblib_err(chg, "Couldn't write to TM_IO_DTEST4_SEL rc=%d\n",
+				rc);
 		}
 	}
 
@@ -2692,13 +2962,17 @@ int smblib_set_prop_pd_voltage_max(struct smb_charger *chg,
 	return rc;
 }
 
-static int __smblib_set_prop_pd_active(struct smb_charger *chg, bool pd_active)
+int smblib_set_prop_pd_active(struct smb_charger *chg,
+			      const union power_supply_propval *val)
 {
 	int rc;
 	bool orientation, sink_attached, hvdcp;
 	u8 stat;
 
-	chg->pd_active = pd_active;
+	if (!get_effective_result(chg->pd_allowed_votable))
+		return -EINVAL;
+
+	chg->pd_active = val->intval;
 	if (chg->pd_active) {
 		vote(chg->apsd_disable_votable, PD_VOTER, true, 0);
 		vote(chg->pd_allowed_votable, PD_VOTER, true, 0);
@@ -2759,7 +3033,7 @@ static int __smblib_set_prop_pd_active(struct smb_charger *chg, bool pd_active)
 		hvdcp = stat & QC_CHARGER_BIT;
 		vote(chg->apsd_disable_votable, PD_VOTER, false, 0);
 		vote(chg->pd_allowed_votable, PD_VOTER, true, 0);
-		vote(chg->usb_irq_enable_votable, PD_VOTER, false, 0);
+		vote(chg->usb_irq_enable_votable, PD_VOTER, true, 0);
 		vote(chg->hvdcp_disable_votable_indirect, PD_INACTIVE_VOTER,
 								false, 0);
 
@@ -2784,15 +3058,6 @@ static int __smblib_set_prop_pd_active(struct smb_charger *chg, bool pd_active)
 	smblib_update_usb_type(chg);
 	power_supply_changed(chg->usb_psy);
 	return rc;
-}
-
-int smblib_set_prop_pd_active(struct smb_charger *chg,
-			      const union power_supply_propval *val)
-{
-	if (!get_effective_result(chg->pd_allowed_votable))
-		return -EINVAL;
-
-	return __smblib_set_prop_pd_active(chg, val->intval);
 }
 
 int smblib_set_prop_ship_mode(struct smb_charger *chg,
@@ -3117,10 +3382,1040 @@ int smblib_get_charge_current(struct smb_charger *chg,
 	*total_current_ua = max(current_ua, val.intval);
 	return 0;
 }
-
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 start */
+int asus_get_prop_batt_temp(struct smb_charger *chg)
+{
+	union power_supply_propval temp_val = {0, };
+	int rc;
+ 	rc = smblib_get_prop_batt_temp(chg, &temp_val);
+ 	return temp_val.intval;
+}
+int asus_get_prop_batt_volt(struct smb_charger *chg)
+{
+	union power_supply_propval volt_val = {0, };
+	int rc;
+ 	rc = smblib_get_prop_batt_voltage_now(chg, &volt_val);
+ 	return volt_val.intval;
+}
+ int asus_get_prop_batt_capacity(struct smb_charger *chg)
+{
+	union power_supply_propval capacity_val = {0, };
+	int rc;
+ 	rc = smblib_get_prop_batt_capacity(chg, &capacity_val);
+ 	return capacity_val.intval;
+}
+ int asus_get_prop_batt_health(struct smb_charger *chg)
+{
+	union power_supply_propval health_val = {0, };
+	int rc;
+	printk("enter asus_get_prop_batt_health--> smblib_get_prop_batt_health\n");
+	rc = smblib_get_prop_batt_health(chg, &health_val);
+ 	return health_val.intval;
+}
+int asus_get_prop_usb_present(struct smb_charger *chg)
+{
+	union power_supply_propval present_val = {0, };
+	int rc;
+ 	rc = smblib_get_prop_usb_present(chg, &present_val);
+ 	return present_val.intval;
+}
+int asus_get_batt_health(void)
+{
+	int bat_health;
+ 	bat_health = asus_get_prop_batt_health(smbchg_dev);
+	printk("enter asus_get_batt_health   bat_health=%d\n",bat_health);
+	if (bat_health == POWER_SUPPLY_HEALTH_GOOD)
+		return 0;
+	else if (bat_health == POWER_SUPPLY_HEALTH_COLD) {
+		//ASUSErclog(ASUS_JEITA_HARD_COLD, "JEITA Hard Cold is triggered");
+		return 1;
+	}
+	else if (bat_health == POWER_SUPPLY_HEALTH_COOL)
+		return 2;
+	else if (bat_health == POWER_SUPPLY_HEALTH_WARM)
+		return 3;
+	else if (bat_health == POWER_SUPPLY_HEALTH_OVERHEAT) {
+		//ASUSErclog(ASUS_JEITA_HARD_HOT, "JEITA Hard Hot is triggered");
+		return 4;
+	}
+	else if (bat_health == POWER_SUPPLY_HEALTH_OVERVOLTAGE) {
+		//ASUSErclog(ASUS_OUTPUT_OVP, "Battery OVP is triggered");
+		return 5;
+	}
+	else
+		return 6;
+}
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 end */
+/* Huaqin add for ZQL1650-68 systme suspend 1 min run sw jeita by fangaijun at 2018/02/06 start */
+static DEFINE_SPINLOCK(bat_alarm_slock);
+static enum alarmtimer_restart batAlarm_handler(struct alarm *alarm, ktime_t now)
+{
+	printk("%s: batAlarm triggered\n", __func__);
+	return ALARMTIMER_NORESTART;
+}
+void asus_batt_RTC_work(struct work_struct *dat)
+{
+	unsigned long batflags;
+	struct timespec new_batAlarm_time;
+	struct timespec mtNow;
+	int RTCSetInterval = 60;
+ 	if (!smbchg_dev) {
+		CHG_DBG("%s: driver not ready yet!\n", __func__);
+		return;
+	}
+//Huaqin added by tangqingyong at 20180206 for USB alert start
+	if ((!asus_get_prop_usb_present(smbchg_dev)) && (!usb_otg_present)) {
+//Huaqin added by tangqingyong at 20180206 for USB alert end
+		alarm_cancel(&bat_alarm);
+		CHG_DBG("%s: usb not present, cancel\n", __func__);
+		return;
+	}
+	mtNow = current_kernel_time();
+	new_batAlarm_time.tv_sec = 0;
+	new_batAlarm_time.tv_nsec = 0;
+ 	RTCSetInterval = 60;
+ 	new_batAlarm_time.tv_sec = mtNow.tv_sec + RTCSetInterval;
+	printk("[BAT][CHG] %s: alarm start after %ds\n", __FUNCTION__, RTCSetInterval);
+	spin_lock_irqsave(&bat_alarm_slock, batflags);
+	alarm_start(&bat_alarm, timespec_to_ktime(new_batAlarm_time));
+	spin_unlock_irqrestore(&bat_alarm_slock, batflags);
+}
+/* Huaqin add for ZQL1650-68 systme suspend 1 min run sw jeita by fangaijun at 2018/02/06 end */
 /************************
  * PARALLEL PSY GETTERS *
  ************************/
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 start */
+#define ICL_475mA	0x12
+#define ICL_500mA	0x13
+#define ICL_950mA	0x26
+#define ICL_1000mA	0x28
+#define ICL_1425mA	0x39
+#define ICL_1500mA	0x3C
+#define ICL_1900mA	0x4C
+#define ICL_2000mA	0x50
+#define ICL_2850mA	0x72
+#define ICL_3000mA	0x78
+#define ASUS_MONITOR_CYCLE		60000
+#define TITAN_750K_MIN	675
+#define TITAN_750K_MAX	851
+#define TITAN_200K_MIN	306
+#define TITAN_200K_MAX	406
+#define VADC_THD_300MV  300
+#define VADC_THD_900MV  900
+#define VADC_THD_1000MV  1000
+ /* Huaqin add for ZQL1650-26 by diganyun at 2018/02/06 start */
+#define	DEMO_DISCHG_THD			60
+#define	DEMO_CHG_THD			58
+//#define	DEMO_NON_CHG_THD	58
+int demo_chg_status = DEMO_CHG_THD;
+/* Huaqin add for ZQL1650-26 by diganyun at 2018/02/06 end */
+ //ASUS BSP Add per min monitor jeita & thermal & typeC_DFP +++
+void smblib_asus_monitor_start(struct smb_charger *chg, int time)
+{
+	//asus_flow_done_flag = 1;
+	cancel_delayed_work(&chg->asus_min_monitor_work);
+	schedule_delayed_work(&chg->asus_min_monitor_work, msecs_to_jiffies(time));
+}
+#define EN_BAT_CHG_EN_COMMAND_TRUE		0
+#define EN_BAT_CHG_EN_COMMAND_FALSE 	BIT(0)
+#define SMBCHG_FLOAT_VOLTAGE_VALUE_4P004		0x45
+#define SMBCHG_FLOAT_VOLTAGE_VALUE_4P064		0x4D
+#define SMBCHG_FLOAT_VOLTAGE_VALUE_4P350		0x73
+#define SMBCHG_FLOAT_VOLTAGE_VALUE_4P357		0x74
+#define SMBCHG_FAST_CHG_CURRENT_VALUE_850MA 	0x22
+#define SMBCHG_FAST_CHG_CURRENT_VALUE_1400MA 	0x38
+#define SMBCHG_FAST_CHG_CURRENT_VALUE_1475MA 	0x3B
+#define SMBCHG_FAST_CHG_CURRENT_VALUE_1500MA 	0x3C
+#define SMBCHG_FAST_CHG_CURRENT_VALUE_2000MA 	0x50
+#define SMBCHG_FAST_CHG_CURRENT_VALUE_2050MA 	0x52
+#define SMBCHG_FAST_CHG_CURRENT_VALUE_3000MA 	0x78
+enum JEITA_state {
+	JEITA_STATE_INITIAL,
+	JEITA_STATE_LESS_THAN_0,
+	JEITA_STATE_RANGE_0_to_100,
+	JEITA_STATE_RANGE_100_to_500,
+	JEITA_STATE_RANGE_500_to_600,
+	JEITA_STATE_LARGER_THAN_600,
+};
+static int SW_recharge(struct smb_charger *chg)
+{
+	int capacity;
+	u8 termination_reg;
+	bool termination_done = 0;
+	int rc;
+	rc = smblib_read(chg, BATTERY_CHARGER_STATUS_1_REG, &termination_reg);       //reg 1006    bit2-bit0 = BATTERY_CHARGER_STATUS
+	if (rc < 0)
+		CHG_DBG_E("%s: Couldn't read BATTERY_CHARGER_STATUS_1_REG\n", __func__);
+	printk("enter SW_recharge termination_reg=0x%x\n",termination_reg);
+	if ((termination_reg & BATTERY_CHARGER_STATUS_MASK) == 0x05)
+		termination_done = 1;
+ 	capacity = asus_get_prop_batt_capacity(smbchg_dev);
+ 	CHG_DBG("%s: bat_capacity = %d, termination_reg = 0x%x\n", __func__, capacity, termination_reg);
+ 	if (capacity <= 98 && termination_done) {                   //reg=1042    CHARGING_ENABLE_CMD  bit0=1    CHARGING_ENABLE_CMD_IS_ACTIVE
+		printk("will start SW_recharge\n");
+		rc = smblib_masked_write(chg, CHARGING_ENABLE_CMD_REG, CHARGING_ENABLE_CMD_BIT, CHARGING_ENABLE_CMD_BIT);
+		if (rc < 0) {
+			CHG_DBG_E("%s: Couldn't write charging_enable\n", __func__);
+			return rc;
+		}
+												 //reg=1042    CHARGING_ENABLE_CMD  bit0=0    CHARGING_ENABLE_CMD_IS_INACTIVE
+		rc = smblib_masked_write(chg, CHARGING_ENABLE_CMD_REG, CHARGING_ENABLE_CMD_BIT, 0);
+		if (rc < 0) {
+			CHG_DBG_E("%s: Couldn't write charging_enable\n", __func__);
+			return rc;
+		}
+	}
+	return 0;
+}
+int smbchg_jeita_judge_state(int old_State, int batt_tempr)
+{
+	int result_State;
+	printk("enter smbchg_jeita_judge_state old_state=%d\n",old_State);
+	//decide value to set each reg (Vchg, Charging enable, Fast charge current)
+	//batt_tempr < 0
+	if (batt_tempr < 0) {
+		result_State = JEITA_STATE_LESS_THAN_0;
+	//0 <= batt_tempr < 10
+	} else if (batt_tempr < 100) {
+		result_State = JEITA_STATE_RANGE_0_to_100;
+	//10 <= batt_tempr < 50
+	} else if (batt_tempr < 500) {
+		result_State = JEITA_STATE_RANGE_100_to_500;
+	//50 <= batt_tempr < 60
+	} else if (batt_tempr < 600) {
+		result_State = JEITA_STATE_RANGE_500_to_600;
+	//60 <= batt_tempr
+	} else{
+		result_State = JEITA_STATE_LARGER_THAN_600;
+	}
+ 	//BSP david: do 3 degree hysteresis
+	if (old_State == JEITA_STATE_LESS_THAN_0 && result_State == JEITA_STATE_RANGE_0_to_100) {
+		if (batt_tempr <= 30) {
+			result_State = old_State;
+		}
+	}
+ 	if (old_State == JEITA_STATE_RANGE_0_to_100 && result_State == JEITA_STATE_RANGE_100_to_500) {
+		if (batt_tempr <= 130) {
+			result_State = old_State;
+		}
+	}
+	if (old_State == JEITA_STATE_RANGE_500_to_600 && result_State == JEITA_STATE_RANGE_100_to_500) {
+		if (batt_tempr >= 470) {
+			result_State = old_State;
+		}
+	}
+	if (old_State == JEITA_STATE_LARGER_THAN_600 && result_State == JEITA_STATE_RANGE_500_to_600) {
+		if (batt_tempr >= 570) {
+			result_State = old_State;
+		}
+	}
+	printk("end smbchg_jeita_judge_state result_State=%d\n",result_State);
+	return result_State;
+}
+static int jeita_status_regs_write(u8 chg_en, u8 FV_CFG, u8 FCC)
+{
+	int rc;
+/* Huaqin modify for ZQL1650-70 optimize Adapter ID by fangaijun at 2018/02/9 start */
+	u8 ICL_reg;
+/* Huaqin modify for ZQL1650-70 optimize Adapter ID by fangaijun at 2018/02/9 end */
+	printk("enter jeita_status_regs_write\n");
+	rc = smblib_masked_write(smbchg_dev, CHARGING_ENABLE_CMD_REG,                   //reg=1042     bit0    reg=1042    CHARGING_ENABLE_CMD  bit0=1    CHARGING_ENABLE_CMD_IS_ACTIVE
+			CHARGING_ENABLE_CMD_BIT, chg_en);
+	if (rc < 0) {
+		printk("[BAT][CHG] Couldn't write charging_enable rc = %d\n", rc);
+		return rc;
+	}
+ 	rc = smblib_masked_write(smbchg_dev, FLOAT_VOLTAGE_CFG_REG,                           //reg=1070      bit7-bit0
+			FLOAT_VOLTAGE_SETTING_MASK, FV_CFG);
+	if (rc < 0) {
+		printk("[BAT][CHG] Couldn't write FV_CFG_reg_value rc = %d\n", rc);
+		return rc;
+	}
+ 	rc = smblib_masked_write(smbchg_dev, FAST_CHARGE_CURRENT_CFG_REG,          //reg=1061   bit7-bit0
+			FAST_CHARGE_CURRENT_SETTING_MASK, FCC);
+	if (rc < 0) {
+		printk("[BAT][CHG] Couldn't write FCC_reg_value rc = %d\n", rc);
+		return rc;
+	}
+/* Huaqin modify for ZQL1650-70 optimize Adapter ID by fangaijun at 2018/02/9 start */
+	rc = smblib_read(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG, &ICL_reg);   //reg1370    usbin_limit
+	if (rc < 0)
+		printk("%s: Couldn't read USBIN_CURRENT_LIMIT_CFG_REG\n", __func__);
+	printk("jeita_status_regs_write  ICL = 0x%x\n",ICL_reg);
+/* Huaqin modify for ZQL1650-70 optimize Adapter ID by fangaijun at 2018/02/9 end */
+	asus_smblib_rerun_aicl(smbchg_dev);
+/* Huaqin modify for ZQL1650-70 optimize Adapter ID by fangaijun at 2018/02/9 start */
+	rc = smblib_read(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG, &ICL_reg);   //reg1370    usbin_limit
+	if (rc < 0)
+		printk("%s: Couldn't read USBIN_CURRENT_LIMIT_CFG_REG\n", __func__);
+	printk("jeita_status_regs_write  ICL2 = 0x%x\n",ICL_reg);
+/* Huaqin modify for ZQL1650-70 optimize Adapter ID by fangaijun at 2018/02/9 end */
+	printk("end jeita_status_regs_write\n");
+	return 0;
+}
+//Huaqin added by tangqingyong at 20180206 for USB alert start
+void asus_update_usb_connector_state(struct smb_charger *chip)
+{
+	int64_t  phy_volta=0;
+	struct qpnp_vadc_result usb_vadc_result;
+	int rc;
+ 	chip->gpio12_vadc_dev=qpnp_get_vadc(chip->dev,"chg-alert");
+ 	if(IS_ERR(chip->gpio12_vadc_dev)){
+		printk(" Error get chg_alert vadc rc = %d \n",rc);
+		rc = PTR_ERR(chip->gpio12_vadc_dev);
+		if(rc != -EPROBE_DEFER)
+			printk(" Couldn't get chg_alert vadc rc = %d \n",rc);
+		return;
+	}
+	if(chip->gpio12_vadc_dev){
+		qpnp_vadc_read(chip->gpio12_vadc_dev, VADC_AMUX8_GPIO, &usb_vadc_result);
+		phy_volta=usb_vadc_result.physical;
+		printk("qpnp_vadc_read :  phy_volta = %lld\n",phy_volta);
+	}else{
+		printk("NONE gpio12_vadc_dev \n");
+		return;
+	}
+ 	if(phy_volta  < CHG_ALERT_HOT_NTC_VOLTAFE){
+		if (!usb_otg_present){
+			switch_set_state(&usb_alert_dev, THM_ALERT_WITH_AC);
+			smblib_set_usb_suspend(chip, 1);
+		}else
+			switch_set_state(&usb_alert_dev, THM_ALERT_NO_AC);
+ 		usb_alert_usb_otg_disable=true;
+		need_replugin_usb=false;
+		rc = smblib_masked_write(chip, CMD_OTG_REG, OTG_EN_BIT, 0);
+//Huaqin added by tangqingyong at 20180212 for usb_otg start
+		switch_set_state(&usb_otg_dev,0);
+//Huaqin added by tangqingyong at 20180212 for usb_otg end
+		if (rc < 0)
+			dev_err(chip->dev, "Couldn't set CMD_OTG_REG rc=%d\n", rc);
+		printk("USB connector hot, suspend charger and otg \n");
+ 	}else if((phy_volta >= CHG_ALERT_HOT_NTC_VOLTAFE) && (phy_volta <= CHG_ALERT_WARM_NTC_VOLTAGE)){
+		if(usb_alert_usb_otg_disable == true){
+			printk("USB alert former state is hot, now is warm\n");
+		}else
+			printk("USB alert former state is GOOD, now is warm");
+ 	}else if((phy_volta > CHG_ALERT_WARM_NTC_VOLTAGE) && need_replugin_usb){
+		switch_set_state(&usb_alert_dev, THM_ALERT_NONE);
+		usb_alert_usb_otg_disable=false;
+		need_replugin_usb=false;
+		rc = smblib_set_usb_suspend(chip, 0);
+		if (rc < 0)
+			dev_err(chip->dev, "Couldn't set CMD_OTG_REG rc=%d\n", rc);
+		printk("USB connector temp is GOOD, recover charge \n");
+ 	}
+ }
+//Huaqin added by tangqingyong at 20180206 for USB alert end
+void jeita_rule(void)
+{
+	static int state = JEITA_STATE_INITIAL;
+	int rc;
+	int bat_volt;
+	int bat_temp;
+	int bat_health;
+	int bat_capacity;
+	u8 charging_enable;
+	u8 FV_CFG_reg_value;
+	u8 FCC_reg_value;
+	u8 FV_reg;
+	u8 ICL_reg;
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 start */
+	u8 FCC_reg;
+	u8 USBIN_ICL_reg;
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 start */
+/* Huaqin add for ZQL1650-26 by diganyun at 2018/02/06 start */
+	bool demo_stop_charging_flag = 0;
+/* Huaqin add for ZQL1650-26 by diganyun at 2018/02/06 end */
+	printk("enter jeita_rule\n");
+	rc = smblib_write(smbchg_dev, JEITA_EN_CFG_REG, 0x10);         //reg1090   0x10 =bit4=1     JEITA_EN_HARDLIMIT=enable     JEITA Temperature Hard Limit Pauses Charging
+	if (rc < 0)
+		printk("%s: Failed to set JEITA_EN_CFG_REG\n", __func__);
+ 	rc = smblib_read(smbchg_dev, FLOAT_VOLTAGE_CFG_REG, &FV_reg);   //reg1070   FLOAT_VOLTAGE
+	if (rc < 0)
+		printk("%s: Couldn't read FLOAT_VOLTAGE_CFG_REG\n", __func__);
+ 	rc = smblib_read(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG, &ICL_reg);   //reg1370    usbin_limit
+	if (rc < 0)
+		printk("%s: Couldn't read USBIN_CURRENT_LIMIT_CFG_REG\n", __func__);
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 start */
+	rc = smblib_read(smbchg_dev, FAST_CHARGE_CURRENT_CFG_REG, &FCC_reg);   //reg=1061    fast cc
+	if (rc < 0)
+		printk("%s: Couldn't read fast_CURRENT_LIMIT_CFG_REG\n", __func__);
+	rc = smblib_read(smbchg_dev, USBIN_ICL_OPTIONS_REG, &USBIN_ICL_reg);     //reg=1366
+	if (rc < 0)
+		printk("%s: Couldn't read USBIN_ICL_reg\n", __func__);
+	printk("jeita_rule Read fast CC=0x%x,USBIN_ICL_reg=0x%x\n",FCC_reg,USBIN_ICL_reg);
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 end */
+	bat_health = asus_get_batt_health();
+	printk("jeita_rule  bat_health=%d\n",bat_health);
+	bat_temp = asus_get_prop_batt_temp(smbchg_dev);
+ 	/* Huaqin add for ZQL1650-76 Report battery temperature to upper by gaochao at 2018/02/07 start */
+	if (bat_temp >= START_REPORT_BAT_TEMPRATURE)
+	{
+		power_supply_changed(smbchg_dev->batt_psy);
+		printk("[%s]line=%d: bat_temp=%d\n", __FUNCTION__, __LINE__, bat_temp);
+	}
+	/* Huaqin add for ZQL1650-76 Report battery temperature to upper by gaochao at 2018/02/07 end */
+ 	bat_volt = asus_get_prop_batt_volt(smbchg_dev);
+	bat_capacity = asus_get_prop_batt_capacity(smbchg_dev);
+	state = smbchg_jeita_judge_state(state, bat_temp);
+	printk("%s: state=%d,batt_health = %s, bat_temp = %d, bat_volt = %d, bat_capacity=%d,ICL = 0x%x, FV_reg=0x%x, Countrycode %d\n",
+		__func__,state, health_type[bat_health], bat_temp, bat_volt,bat_capacity, ICL_reg, FV_reg,BR_countrycode);
+ 	switch (state) {
+	case JEITA_STATE_LESS_THAN_0:
+		charging_enable = EN_BAT_CHG_EN_COMMAND_FALSE;
+		FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P357;
+		FCC_reg_value = SMBCHG_FAST_CHG_CURRENT_VALUE_850MA;
+		printk("%s: temperature < 0\n", __func__);
+		break;
+	case JEITA_STATE_RANGE_0_to_100:
+		charging_enable = EN_BAT_CHG_EN_COMMAND_TRUE;
+		//FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P357;
+		//FCC_reg_value = SMBCHG_FAST_CHG_CURRENT_VALUE_850MA;
+		FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P350;                   //reg=1070
+		FCC_reg_value = SMBCHG_FAST_CHG_CURRENT_VALUE_1400MA;                //reg=1061
+		printk("%s: 0 <= temperature < 10\n", __func__);
+		rc = SW_recharge(smbchg_dev);
+		if (rc < 0) {
+			printk("%s: SW_recharge failed rc = %d\n", __func__, rc);
+		}
+		break;
+#if 0
+	case JEITA_STATE_RANGE_100_to_200:
+		charging_enable = EN_BAT_CHG_EN_COMMAND_TRUE;
+		//FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P357;
+		//FCC_reg_value = SMBCHG_FAST_CHG_CURRENT_VALUE_1475MA;
+		FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P350;                   //reg=1070
+		FCC_reg_value = SMBCHG_FAST_CHG_CURRENT_VALUE_2000MA;             //reg=1061
+		printk("%s: 10 <= temperature < 20\n", __func__);
+		rc = SW_recharge(smbchg_dev);
+		if (rc < 0) {
+			printk("%s: SW_recharge failed rc = %d\n", __func__, rc);
+		}
+		break;
+	case JEITA_STATE_RANGE_200_to_500:
+		charging_enable = EN_BAT_CHG_EN_COMMAND_TRUE;
+		if (bat_volt <= 4200000) {
+			FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P357;
+			FCC_reg_value = SMBCHG_FAST_CHG_CURRENT_VALUE_3000MA;
+		} else {
+			FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P357;
+			FCC_reg_value = SMBCHG_FAST_CHG_CURRENT_VALUE_1500MA;
+		}
+		FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P350;
+		FCC_reg_value = SMBCHG_FAST_CHG_CURRENT_VALUE_2000MA;
+		printk("%s: 20 <= temperature < 50\n", __func__);
+		rc = SW_recharge(smbchg_dev);
+		if (rc < 0) {
+			printk("%s: SW_recharge failed rc = %d\n", __func__, rc);
+		}
+		break;
+#endif
+	case JEITA_STATE_RANGE_100_to_500:
+		charging_enable = EN_BAT_CHG_EN_COMMAND_TRUE;
+		//FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P357;
+		//FCC_reg_value = SMBCHG_FAST_CHG_CURRENT_VALUE_1475MA;
+		FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P350;                   //reg=1070
+		FCC_reg_value = SMBCHG_FAST_CHG_CURRENT_VALUE_2000MA;             //reg=1061
+		printk("%s: 10 <= temperature < 50\n", __func__);
+		rc = SW_recharge(smbchg_dev);
+		if (rc < 0) {
+			printk("%s: SW_recharge failed rc = %d\n", __func__, rc);
+		}
+		break;
+	case JEITA_STATE_RANGE_500_to_600:
+#if 0
+		if (bat_volt >= 4100000 && FV_reg == 0x74) {
+			charging_enable = EN_BAT_CHG_EN_COMMAND_FALSE;
+			FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P357;
+		} else {
+			charging_enable = EN_BAT_CHG_EN_COMMAND_TRUE;
+			FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P064;
+		}
+#endif
+		charging_enable = EN_BAT_CHG_EN_COMMAND_TRUE;
+		FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P004;
+		FCC_reg_value = SMBCHG_FAST_CHG_CURRENT_VALUE_2000MA;
+		printk("%s: 50 <= temperature < 60\n", __func__);
+		break;
+	case JEITA_STATE_LARGER_THAN_600:
+		charging_enable = EN_BAT_CHG_EN_COMMAND_FALSE;
+		FV_CFG_reg_value = SMBCHG_FLOAT_VOLTAGE_VALUE_4P004;
+		FCC_reg_value = SMBCHG_FAST_CHG_CURRENT_VALUE_1475MA;
+		printk("%s: temperature >= 60\n", __func__);
+		break;
+	}
+/* Huaqin add for ZQL1650-26 by diganyun at 2018/02/06 start */
+	if (demo_app_property_flag) {
+			if(bat_capacity >= DEMO_DISCHG_THD)
+				demo_chg_status = DEMO_DISCHG_THD;
+			//else if(bat_capacity >= DEMO_NON_CHG_THD)
+			//	demo_chg_status = DEMO_NON_CHG_THD;
+			// need not set status detween DEMO_CHG_THD and DEMO_NON_CHG_THD
+			else if(bat_capacity <= DEMO_CHG_THD)
+				demo_chg_status = DEMO_CHG_THD;
+			else;
+ 			if(demo_chg_status == DEMO_DISCHG_THD){
+				smblib_set_usb_suspend(smbchg_dev, true);
+				printk("demo_app stop usb charging  ---");
+			}
+			else if(!usb_alert_usb_otg_disable){
+//Huaqin add for ZQL1650-26 by diganyun at 2018/02/11 when usb alert do not resume usb
+				smblib_set_usb_suspend(smbchg_dev, false);
+				printk("demo_app resume usb charging  ---");
+				}
+			else;
+ 			if(demo_chg_status == DEMO_CHG_THD)
+				demo_stop_charging_flag = false;
+			else
+				demo_stop_charging_flag = true;
+	}
+ 	printk("%s: soc = %d, demo_flag = %d, stop_flag = %d \n",
+		__func__, bat_capacity, demo_app_property_flag, demo_stop_charging_flag);
+ 	if (smartchg_stop_flag || demo_stop_charging_flag) {
+		printk("%s: Stop charging, smart = %d, demo = %d\n", __func__, smartchg_stop_flag, demo_stop_charging_flag);
+		charging_enable = EN_BAT_CHG_EN_COMMAND_FALSE;
+	}
+/* Huaqin add for ZQL1650-26 by diganyun at 2018/02/06 end */
+ 	rc = jeita_status_regs_write(charging_enable, FV_CFG_reg_value, FCC_reg_value);
+	if (rc < 0)
+		printk("%s: Couldn't write jeita_status_register rc = %d\n", __func__, rc);
+}
+void asus_min_monitor_work(struct work_struct *work)
+{
+/* Huaqin add for ZQL1650-281 by diganyun at 2018/02/08 start */
+	int rc;
+/* Huaqin add for ZQL1650-281 by diganyun at 2018/02/08 end */
+	printk("enter asus_min_monitor_work\n");
+	if (!smbchg_dev) {
+		printk("%s: smbchg_dev is null due to driver probed isn't ready\n", __func__);
+		return;
+	}
+//Huaqin added by tangqingyong at 20180206 for USB alert start
+	if(usb_otg_present){
+		printk("enter asus_min_monitor_work-->  OTG present\n");
+		asus_update_usb_connector_state(smbchg_dev);
+		last_jeita_time = current_kernel_time();
+		schedule_delayed_work(&smbchg_dev->asus_min_monitor_work, msecs_to_jiffies(ASUS_MONITOR_CYCLE));
+		schedule_delayed_work(&smbchg_dev->asus_batt_RTC_work, 0);
+		asus_smblib_relax(smbchg_dev);
+		return;
+	}
+//Huaqin added by tangqingyong at 20180206 for USB alert end
+ 	if (!asus_get_prop_usb_present(smbchg_dev)) {
+		//asus_typec_removal_function(smbchg_dev);
+		smblib_uusb_removal(smbchg_dev);
+		return;
+	}
+ 	jeita_rule();
+/* Huaqin add for ZQL1650-281 by diganyun at 2018/02/08 start */
+	if(charger_limit_enable_flag){
+		if (asus_get_prop_batt_capacity(smbchg_dev) >= charger_limit_value) {
+			CHG_DBG("%s: charger limit is enable & over, stop charging\n", __func__);
+			rc = smblib_masked_write(smbchg_dev, CHARGING_ENABLE_CMD_REG, CHARGING_ENABLE_CMD_BIT, 1);
+		} else {
+			rc = smblib_masked_write(smbchg_dev, CHARGING_ENABLE_CMD_REG, CHARGING_ENABLE_CMD_BIT, 0);
+		}
+		printk("%s: charger limit flag = %d ,limit-soc = %d & over, stop charging\n",
+			__func__, charger_limit_enable_flag, charger_limit_value);
+	}
+/* Huaqin add for ZQL1650-281 by diganyun at 2018/02/08 end */
+//Huaqin added by tangqingyong at 20180206 for USB alert start
+	asus_update_usb_connector_state(smbchg_dev);
+//Huaqin added by tangqingyong at 20180206 for USB alert end
+	if (asus_get_prop_usb_present(smbchg_dev)) {
+		printk("enter asus_min_monitor_work--> asus_get_prop_usb_present\n");
+/* Huaqin add for ZQL1650-68 systme suspend 1 min run sw jeita by fangaijun at 2018/02/06 start */
+		last_jeita_time = current_kernel_time();
+/* Huaqin add for ZQL1650-68 systme suspend 1 min run sw jeita by fangaijun at 2018/02/06 end */
+		schedule_delayed_work(&smbchg_dev->asus_min_monitor_work, msecs_to_jiffies(ASUS_MONITOR_CYCLE));
+/* Huaqin add for ZQL1650-68 systme suspend 1 min run sw jeita by fangaijun at 2018/02/06 start */
+		schedule_delayed_work(&smbchg_dev->asus_batt_RTC_work, 0);
+/* Huaqin add for ZQL1650-68 systme suspend 1 min run sw jeita by fangaijun at 2018/02/06 end */
+	}
+	printk("end  asus_min_monitor_work\n");
+	asus_smblib_relax(smbchg_dev);
+}
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 start */
+//ASUS BSP Add per min monitor jeita & thermal & typeC_DFP ---
+void asus_chg_flow_work(struct work_struct *work)
+{
+	const struct apsd_result *apsd_result;
+	int rc;
+	u8 set_icl;
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 start */
+#ifndef HQ_BUILD_FACTORY
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 start */
+	u8 USBIN_1_cc;
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 end */
+#endif
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 end */
+	//u8 legacy_cable_reg;
+	//bool cc_attached;
+	//u8 stat;
+	printk("enter asus_chg_flow_work\n");
+#if 0
+	if (vbus_without_cc_flag) {
+		rc = smblib_read(smbchg_dev, TYPE_C_STATUS_4_REG, &stat);
+		cc_attached = (stat & CC_ATTACHED_BIT);
+		CHG_DBG("%s: vbus_no_cc, cc_attached = %d\n", __func__, cc_attached);
+		if (!cc_attached) {
+			asus_adapter_detecting_flag = 0;
+			asus_smblib_relax(smbchg_dev);
+			return;
+		} else {
+			vbus_without_cc_flag = 0;
+			smblib_update_usb_type(smbchg_dev);
+			power_supply_changed(smbchg_dev->usb_psy);
+		}
+	}
+#endif
+	if (!asus_get_prop_usb_present(smbchg_dev)) {
+		//asus_typec_removal_function(smbchg_dev);
+		smblib_uusb_removal(smbchg_dev);
+		return;
+	}
+	apsd_result = smblib_update_usb_type(smbchg_dev);
+	printk("enter asus_chg_flow_work  apsd_result->pst=%d\n",apsd_result->pst);
+	if(apsd_result->pst == POWER_SUPPLY_TYPE_USB){
+		//smbchg_dev->real_charger_type = POWER_SUPPLY_TYPE_USB;
+		//CHG_DBG("set real_charger_type as %d\n",POWER_SUPPLY_TYPE_USB);
+		power_supply_changed(smbchg_dev->usb_psy);
+	}
+#if 0
+	if (apsd_result->bit == (DCP_CHARGER_BIT | QC_3P0_BIT))
+		HVDCP_FLAG = 3;
+	else if (apsd_result->bit == (DCP_CHARGER_BIT | QC_2P0_BIT))
+		HVDCP_FLAG = 2;
+	else
+		HVDCP_FLAG = 0;
+	UFP_FLAG = asus_get_ufp_mode();
+ 	rc = smblib_read(smbchg_dev, TYPE_C_STATUS_5_REG, &legacy_cable_reg);       //reg=130f
+	if (rc < 0)
+		CHG_DBG_E("%s: Couldn't read TYPE_C_STATUS_5_REG\n", __func__);
+	LEGACY_CABLE_FLAG = legacy_cable_reg & TYPEC_LEGACY_CABLE_STATUS_BIT;
+ 	CHG_DBG("%s: %s detected, typec mode = %s, LEGACY_CABLE_FLAG = %d\n", __func__, apsd_result->name,
+		ufp_type[UFP_FLAG], LEGACY_CABLE_FLAG);
+	if ((apsd_result->bit == 0) && (UFP_FLAG != 0)) {
+		CHG_DBG("%s: APSD not ready yet, delay 1s\n", __func__);
+		msleep(1000);
+		apsd_result = smblib_update_usb_type(smbchg_dev);
+		if (apsd_result->bit == (DCP_CHARGER_BIT | QC_3P0_BIT))
+			HVDCP_FLAG = 3;
+		else if (apsd_result->bit == (DCP_CHARGER_BIT | QC_2P0_BIT))
+			HVDCP_FLAG = 2;
+		else
+			HVDCP_FLAG = 0;
+		UFP_FLAG = asus_get_ufp_mode();
+		CHG_DBG("%s: Retry %s detected, typec mode = %s\n", __func__, apsd_result->name, ufp_type[UFP_FLAG]);
+	}
+#endif
+	if (smbchg_dev->pd_active) {
+		printk("%s: PD_active\n", __func__);
+		//asus_smblib_rerun_aicl(smbchg_dev);
+		//asus_adapter_detecting_flag = 0;
+		smblib_asus_monitor_start(smbchg_dev, 0);		//ASUS BSP Austin_T: Jeita start
+		return;
+	}
+	switch (apsd_result->bit) {
+	case SDP_CHARGER_BIT:
+	case FLOAT_CHARGER_BIT:
+		printk("asus_chg_flow_work enter FLOAT_CHARGER_BIT\n");
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 start */
+#ifndef HQ_BUILD_FACTORY
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 start */
+		rc = smblib_read(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG, &USBIN_1_cc);   //reg=1370
+		if (rc < 0)
+			printk("%s: Couldn't read fast_CURRENT_LIMIT_CFG_REG\n", __func__);
+		printk("asus_chg_flow_work usbmode_USBIN_1_cc=0x%x\n",USBIN_1_cc);
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 end */
+#endif
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 end */
+			set_icl = ICL_500mA;
+		rc = smblib_masked_write(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG,
+			USBIN_CURRENT_LIMIT_MASK, set_icl);
+		if (rc < 0)
+			printk("%s: Failed to set USBIN_CURRENT_LIMIT\n", __func__);
+		asus_smblib_rerun_aicl(smbchg_dev);
+		//asus_adapter_detecting_flag = 0;
+		smblib_asus_monitor_start(smbchg_dev, 0);		//ASUS BSP Austin_T: Jeita start
+		break;
+	case CDP_CHARGER_BIT:
+		printk("asus_chg_flow_work enter CDP_CHARGER_BIT\n");
+/* Huaqin modify for ZQL1650 modify CDP charging current by fangaijun at 2018/04/18 start*/
+			set_icl = ICL_1500mA;
+/* Huaqin modify for ZQL1650 modify CDP charging current by fangaijun at 2018/04/18 end*/
+		rc = smblib_masked_write(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG,     //reg=1370   bit7-bit0=USBIN_CURRENT_LIMIT
+			USBIN_CURRENT_LIMIT_MASK, set_icl);
+		if (rc < 0)
+			printk("%s: Failed to set USBIN_CURRENT_LIMIT\n", __func__);
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 start */
+#ifndef HQ_BUILD_FACTORY
+/* Huaqin modify for ZQL1650 modify CDP charging current by fangaijun at 2018/04/18 start*/
+		rc = smblib_read(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG, &USBIN_1_cc);   //reg=1370
+		if (rc < 0)
+			printk("%s: Couldn't read fast_CURRENT_LIMIT_CFG_REG\n", __func__);
+		printk("asus_chg_flow_work cdp_USBIN_1_cc=0x%x\n",USBIN_1_cc);
+/* Huaqin modify for ZQL1650 modify CDP charging current by fangaijun at 2018/04/18 end*/
+#endif
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 end */
+		asus_smblib_rerun_aicl(smbchg_dev);
+		//asus_adapter_detecting_flag = 0;
+		smblib_asus_monitor_start(smbchg_dev, 0);		//ASUS BSP Austin_T: Jeita start
+		break;
+	case OCP_CHARGER_BIT:
+		printk("asus_chg_flow_work entert OCP_CHARGER_BIT");
+			set_icl = ICL_1000mA;                                                                                                                                 //reg=1370 bit7-bit0
+		rc = smblib_masked_write(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG,
+			USBIN_CURRENT_LIMIT_MASK, set_icl);
+		if (rc < 0)
+			CHG_DBG_E("%s: Failed to set USBIN_CURRENT_LIMIT\n", __func__);
+		asus_smblib_rerun_aicl(smbchg_dev);
+		//asus_adapter_detecting_flag = 0;
+		smblib_asus_monitor_start(smbchg_dev, 0);		//ASUS BSP Austin_T: Jeita start
+		break;
+	case DCP_CHARGER_BIT | QC_3P0_BIT:
+	case DCP_CHARGER_BIT | QC_2P0_BIT:
+	case DCP_CHARGER_BIT:
+#if 0
+		rc = smblib_write(smbchg_dev, HVDCP_PULSE_COUNT_MAX, 0x0);
+		if (rc < 0)
+			CHG_DBG_E("%s: Failed to set HVDCP_PULSE_COUNT_MAX\n", __func__);
+ 		rc = smblib_masked_write(smbchg_dev, USBIN_OPTIONS_1_CFG_REG, AUTO_SRC_DETECT_BIT | HVDCP_EN_BIT, 0x0);
+		if (rc < 0)
+			CHG_DBG_E("%s: Failed to set USBIN_OPTIONS_1_CFG_REG\n", __func__);
+ 		printk("%s: Rerun APSD 1st entert DCP_CHARGER_BIT\n", __func__);
+		rc = smblib_masked_write(smbchg_dev, CMD_APSD_REG, APSD_RERUN_BIT, APSD_RERUN_BIT);    //reg=1341  bit0=1  Rerun APSD Algorithm
+		if (rc < 0)
+			printk("%s: Failed to set CMD_APSD_REG\n", __func__);
+#endif
+		printk("enter  asus_chg_flow_work  DCP_CHARGER_BIT\n");
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 start */
+#ifndef HQ_BUILD_FACTORY
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 start */
+		rc = smblib_read(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG, &USBIN_1_cc);   //reg=1370
+		if (rc < 0)
+			printk("%s: Couldn't read fast_CURRENT_LIMIT_CFG_REG\n", __func__);
+		printk("asus_chg_flow_work dcp_USBIN_1_cc=0x%x\n",USBIN_1_cc);
+ 		set_icl = ICL_1000mA;                                                                                                                                 //reg=1370 bit7-bit0
+		rc = smblib_masked_write(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG,
+			USBIN_CURRENT_LIMIT_MASK, set_icl);
+		if (rc < 0)
+			CHG_DBG_E("%s: Failed to set USBIN_CURRENT_LIMIT\n", __func__);
+		rc = smblib_read(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG, &USBIN_1_cc);   //reg=1370
+		if (rc < 0)
+			printk("%s: Couldn't read fast_CURRENT_LIMIT_CFG_REG\n", __func__);
+		printk("asus_chg_flow_work dcp_USBIN_2_cc=0x%x\n",USBIN_1_cc);
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 end */
+#endif
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 end */
+		rc = gpio_direction_output(global_gpio->ADC_SW_EN, 1);	//USB DPDM Switch to ADC(2D)
+		if (rc) {
+			printk("%s: failed to pull-high ADC_SW_EN-gpios59\n", __func__);
+			break;
+		} else {
+			printk("%s: Pull high USBSW_S\n", __func__);
+		}
+#if 0
+		if (HVDCP_FLAG == 0) {
+			printk("%s: NOT factory_build, HVDCP_FLAG = 0, ADC_WAIT_TIME = 15s\n", __func__);
+			schedule_delayed_work(&smbchg_dev->asus_adapter_adc_work, msecs_to_jiffies(ADC_WAIT_TIME_HVDCP0));
+		} else {
+			printk("%s: NOT factory_build, HVDCP_FLAG = 2or3, ADC_WAIT_TIME = 0.1s\n", __func__);
+			schedule_delayed_work(&smbchg_dev->asus_adapter_adc_work, msecs_to_jiffies(ADC_WAIT_TIME_HVDCP23));
+		}
+#endif
+		schedule_delayed_work(&smbchg_dev->asus_adapter_adc_work, msecs_to_jiffies(15000));
+		break;
+	default:
+		//asus_adapter_detecting_flag = 0;
+		//asus_flow_processing = 0;
+		asus_smblib_relax(smbchg_dev);
+		break;
+	}
+}
+extern int32_t get_ID_vadc_voltage(void);
+static void CHG_TYPE_judge(struct smb_charger *chg)
+{
+	int adc_result;
+	int ret;
+	int MIN_750K, MAX_750K, MIN_200K, MAX_200K;
+ 	MIN_750K = TITAN_750K_MIN;
+	MAX_750K = TITAN_750K_MAX;
+	MIN_200K = TITAN_200K_MIN;
+	MAX_200K = TITAN_200K_MAX;
+ 	// read charger ID via pm660 gpio3
+	adc_result = get_ID_vadc_voltage();
+ 	if (adc_result <= VADC_THD_300MV) {                                                      //vdm1 < 0.3v
+		printk("CHG_TYPE_judge adc_result1=%d\n",adc_result);
+		ret = gpio_direction_output(global_gpio->ADCPWREN_PMI_GP1, 1);
+		if (ret) {
+			printk("%s: failed to pull-high ADCPWREN_PMI_GP1-gpios34\n", __func__);
+		} else {
+			printk("%s: Pull high ADC_VH_EN\n", __func__);
+		}
+		msleep(500);
+ 		adc_result = get_ID_vadc_voltage();
+		printk("CHG_TYPE_judge adc_result2=%d\n",adc_result);
+		if (adc_result >= VADC_THD_1000MV) {                                           //vdm2 > 1v
+			ASUS_ADAPTER_ID = OTHERS;
+		} else {
+			if (adc_result >= MIN_750K && adc_result <= MAX_750K)           //0.675 < adc_result < 0.851
+				ASUS_ADAPTER_ID = ASUS_750K;
+			else if (adc_result >= MIN_200K && adc_result <= MAX_200K)    //0.306 < adc_result <  0.406
+				ASUS_ADAPTER_ID = ASUS_200K;
+			else
+				ASUS_ADAPTER_ID = OTHERS;
+		}
+	} else {                                                //vdm1
+		if (adc_result >= VADC_THD_900MV)
+			ASUS_ADAPTER_ID = PB;
+		else
+			ASUS_ADAPTER_ID = OTHERS;
+	}
+	printk("CHG_TYPE_judge  ASUS_ADAPTER_ID=%d\n",ASUS_ADAPTER_ID);
+}
+ void asus_adapter_adc_work(struct work_struct *work)
+{
+	int rc;
+	u8 usb_max_current;
+/* Huaqin modify for ZQL1650 optimize adapter id input_suspend by fangaijun at 2018/03/22 start*/
+	u8 USBIN_CURRENT_LIMIT_reg;
+/* Huaqin modify for ZQL1650 optimize adapter id input_suspend by fangaijun at 2018/03/22 end*/
+	printk("enter asus_adapter_adc_work\n");
+	if (!asus_get_prop_usb_present(smbchg_dev)) {
+		//asus_typec_removal_function(smbchg_dev);
+		smblib_uusb_removal(smbchg_dev);
+		return;
+	}
+/* Huaqin modify for ZQL1650 optimize adapter id input_suspend by fangaijun at 2018/03/22 start*/
+	rc = smblib_read(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG, &USBIN_CURRENT_LIMIT_reg);
+	printk("enter1 asus_adapter_adc_work USBIN_CURRENT_LIMIT_reg=0x%x\n",USBIN_CURRENT_LIMIT_reg);
+	rc = smblib_write(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG, 0x01);
+	rc = smblib_read(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG, &USBIN_CURRENT_LIMIT_reg);
+	if (rc < 0)
+		CHG_DBG_E("%s: Failed to set USBIN_OPTIONS_1_CFG_REG\n", __func__);
+	printk("enter2 asus_adapter_adc_work USBIN_CURRENT_LIMIT_reg=0x%x\n",USBIN_CURRENT_LIMIT_reg);
+	#if 0
+	rc = smblib_set_usb_suspend(smbchg_dev, 1);
+	if (rc < 0)
+		printk("%s: Couldn't set 1340_USBIN_SUSPEND_BIT 1\n", __func__);
+	#endif
+/* Huaqin modify for ZQL1650 optimize adapter id input_suspend by fangaijun at 2018/03/22 end*/
+	msleep(5);
+	CHG_TYPE_judge(smbchg_dev);
+#if 0
+	//WeiYu: WA for legacy wrong detection of 1.5/3A DCP type
+	//WeiYu ++ disable this part by 0&& due to Vbus will falling
+	if(0&&(HVDCP_FLAG ==0)&&(UFP_FLAG ==3||UFP_FLAG ==2)){
+		asus_rerun_legacy();
+	}
+ 	//WeiYu ++ for 1.5A COS issue
+	if(g_Charger_mode && (HVDCP_FLAG ==0)&&(UFP_FLAG ==3||UFP_FLAG ==2)){
+ 		rc = smblib_read(smbchg_dev, TYPE_C_STATUS_5_REG, &legacy_cable_reg);
+		if (rc < 0)
+			CHG_DBG_E("%s: redo in charger mode but Couldn't read TYPE_C_STATUS_5_REG\n", __func__);
+		LEGACY_CABLE_FLAG = legacy_cable_reg & TYPEC_LEGACY_CABLE_STATUS_BIT;
+		CHG_DBG(" rerun legacy for QC2/3: %d\n",LEGACY_CABLE_FLAG);
+ 	}
+#endif
+	//determine current-setting value for DCP type AC:
+	switch (ASUS_ADAPTER_ID) {
+	case ASUS_750K:
+			usb_max_current = ICL_2000mA;
+		break;
+	case ASUS_200K:
+			usb_max_current = ICL_2000mA;
+		break;
+	case PB:
+			usb_max_current = ICL_2000mA;
+		break;
+	case OTHERS:
+/* Huaqin modify for ZQL1650-74 Countrycode Adapter by diganyun at 2018/03/26 start */
+		if(BR_countrycode == COUNTRY_BR || BR_countrycode == COUNTRY_IN)
+			{
+			usb_max_current = ICL_2000mA;
+			printk("country  BR or IN \n");
+			}
+		else
+			{
+			printk("ASUS_ADAPTER_ID  OTHERS \n");
+			usb_max_current = ICL_1000mA;
+			}
+/* Huaqin modify for ZQL1650-74 Countrycode Adapter by diganyun at 2018/03/26 end */
+		break;
+	case ADC_NOT_READY:
+		usb_max_current = ICL_1000mA;
+		break;
+	}
+	rc = smblib_set_usb_suspend(smbchg_dev, 0);
+	if (rc < 0)
+		printk("%s: Couldn't set 1340_USBIN_SUSPEND_BIT 0\n", __func__);
+ 	//Ara  close gpio in order +++
+	rc = gpio_direction_output(global_gpio->ADCPWREN_PMI_GP1, 0);
+	if (rc)
+		printk("%s: failed to pull-low ADCPWREN_PMI_GP1-gpios34\n", __func__);
+	else
+		printk("%s: Pull low ADC_VH_EN\n", __func__);
+	rc = gpio_direction_output(global_gpio->ADC_SW_EN, 0);
+	if (rc)
+		printk("%s: failed to pull-low ADC_SW_EN-gpios59\n", __func__);
+	else
+		printk("%s: Pull low USBSW_S\n", __func__);
+	//Ara  close gpio in order ---
+ #if 0
+	if (asus_CHG_TYPE == ASUS_QC_AC_ID) {
+		printk("%s: Write HVDCP_PULSE_COUNT_MAX = 4C\n", __func__);
+		rc = smblib_write(smbchg_dev, HVDCP_PULSE_COUNT_MAX, 0x4C);
+	} else {
+		printk("%s: Write HVDCP_PULSE_COUNT_MAX = 54\n", __func__);
+		rc = smblib_write(smbchg_dev, HVDCP_PULSE_COUNT_MAX, 0x54);
+	}
+	if (rc < 0)
+		printk("%s: Failed to set HVDCP_PULSE_COUNT_MAX\n", __func__);
+ 	rc = smblib_write(smbchg_dev, USBIN_OPTIONS_1_CFG_REG, 0x7D);
+	if (rc < 0)
+		printk("%s: Failed to set USBIN_OPTIONS_1_CFG_REG\n", __func__);
+ 	// bsp WeiYu: WA for non-legacy 1.5A current fail on Titan O/Ara
+	if(!(!LEGACY_CABLE_FLAG && UFP_FLAG==2)){
+		printk("%s: Rerun APSD 2nd\n", __func__);
+		rc = smblib_masked_write(smbchg_dev, CMD_APSD_REG, APSD_RERUN_BIT, APSD_RERUN_BIT);
+		if (rc < 0)
+			CHG_DBG_E("%s: Failed to set CMD_APSD_REG\n", __func__);
+ 		msleep(1000);
+	}
+#endif
+//Set current:
+	printk("%s: ASUS_ADAPTER_ID = %s, setting mA = 0x%x\n", __func__, asus_id[ASUS_ADAPTER_ID], usb_max_current);
+ 	//Set current:
+	rc = smblib_masked_write(smbchg_dev, USBIN_CURRENT_LIMIT_CFG_REG,                //reg=1370     bit7-bit0=
+		USBIN_CURRENT_LIMIT_MASK, usb_max_current);
+	if (rc < 0)
+		printk("%s: Failed to set USBIN_CURRENT_LIMIT\n", __func__);
+ 	asus_smblib_rerun_aicl(smbchg_dev);
+	//asus_adapter_detecting_flag = 0;
+	smblib_asus_monitor_start(smbchg_dev, 0);		//ASUS BSP Austin_T: Jeita start
+}
+//ASUS BSP Add per min monitor jeita & thermal & typeC_DFP ---
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 end */
+void asus_insertion_initial_settings(struct smb_charger *chg)
+{
+	int rc;
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 start */
+#ifndef HQ_BUILD_FACTORY
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 start */
+	u8 USBIN_cc;
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 end */
+#endif
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 end */
+ 	CHG_DBG("%s: start\n", __func__);
+//No.1
+	rc = smblib_write(chg, PRE_CHARGE_CURRENT_CFG_REG, 0x06);                                        //reg=1060    0x03   75mA  gaiwei  0x06  150mA
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default PRE_CHARGE_CURRENT_CFG_REG rc=%d\n", rc);
+	}
+//No.2
+	rc = smblib_write(chg, FAST_CHARGE_CURRENT_CFG_REG, 0x28);                                      //reg=1061      0x38 1475mA  gaiwei  0x28 1000mA
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default FAST_CHARGE_CURRENT_CFG_REG rc=%d\n", rc);
+	}
+//No.3
+	rc = smblib_write(chg, FLOAT_VOLTAGE_CFG_REG, 0x73);                                                     //reg=1070    0x74  4.357v   gaiwei  0x73  4.35v
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default FLOAT_VOLTAGE_CFG_REG rc=%d\n", rc);
+	}
+//No.4
+	rc = smblib_masked_write(chg, FVC_RECHARGE_THRESHOLD_CFG_REG,                    //reg=1081    0x58    4.147v
+			FVC_RECHARGE_THRESHOLD_MASK, 0x58);
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default FVC_RECHARGE_THRESHOLD_CFG_REG rc=%d\n", rc);
+	}
+//No.5
+	rc = smblib_masked_write(chg, USBIN_ICL_OPTIONS_REG,                                              //reg=1366    010    500mA
+ 			FVC_RECHARGE_THRESHOLD_MASK, 0x02);
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default FVC_RECHARGE_THRESHOLD_CFG_REG rc=%d\n", rc);
+	}
+//No.6
+	rc = smblib_masked_write(chg, TCCC_CHARGE_CURRENT_TERMINATION_CFG_REG,   //reg=1063   termin current=150ma
+			TCCC_CHARGE_CURRENT_TERMINATION_SETTING_MASK, 0x03);
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default TCCC_CHARGE_CURRENT_TERMINATION_CFG_REG rc=%d\n", rc);
+	}
+//No.7
+	rc = smblib_masked_write(chg, USBIN_ADAPTER_ALLOW_CFG_REG,                                  //reg=1360   bit3-bit0   0x08  5v-9v    gaiwei  0x0  5v
+			USBIN_ADAPTER_ALLOW_MASK, 0x00);
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default USBIN_ADAPTER_ALLOW_CFG_REG rc=%d\n", rc);
+	}
+//No.8
+	rc = smblib_write(chg, CHGR_CFG2_REG, 0x40);                        //reg=1051   01000000      bit6=Charge Enable Polarity      1 = Active low (0: enable charging)
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default CHGR_CFG2_REG rc=%d\n", rc);
+	}
+//No.9
+	rc = smblib_masked_write(chg, CHARGING_ENABLE_CMD_REG,                   //reg=1042  1 enable    CHARGING_ENABLE_CMD
+			CHARGING_ENABLE_CMD_BIT, CHARGING_ENABLE_CMD_BIT);
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default CHARGING_ENABLE_CMD_REG rc=%d\n", rc);
+	}
+//No.10
+	rc = smblib_masked_write(chg, CHARGING_ENABLE_CMD_REG,                 //reg=1042  0    disenable   CHARGING_ENABLE_CMD
+			CHARGING_ENABLE_CMD_BIT, 0);
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default CHARGING_ENABLE_CMD_REG rc=%d\n", rc);
+	}
+//No.11
+	rc = smblib_masked_write(chg, VSYS_MIN_SEL_CFG_REG,                          //reg=1683       vsy_min=3.6v     Minimum system voltage setting
+			VSYS_MIN_SEL_MASK, 0x02);
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default VSYS_MIN_SEL_CFG_REG rc=%d\n", rc);
+	}
+//No.12
+#if 0
+ 	rc = smblib_masked_write(chg, CMD_HVDCP_2_REG,                     //reg=1343       bit3=1
+			FORCE_5V_BIT, FORCE_5V_BIT);
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default CMD_HVDCP_2_REG rc=%d\n", rc);
+	}
+//No.13-1
+ 	rc = smblib_masked_write(chg, HVDCP_PULSE_COUNT_MAX,      //reg=135b      bit7/bit6=00
+			HVDCP_PULSE_COUNT_MAX_QC2P0, 0x00);
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default HVDCP_PULSE_COUNT_MAX rc=%d\n", rc);
+	}
+//No.13-2
+	rc = smblib_masked_write(chg, HVDCP_PULSE_COUNT_MAX,      //reg=135b      bit5--bit0=00000
+			HVDCP_PULSE_COUNT_MAX_QC3P0, 0x00);
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default HVDCP_PULSE_COUNT_MAX rc=%d\n", rc);
+	}
+#endif
+//No.14
+	rc = smblib_masked_write(chg, USBIN_LOAD_CFG_REG,                  //reg=1365    bit4=1  Use SW to control Input Current Limit after APSD is completed
+			ICL_OVERRIDE_AFTER_APSD_BIT, ICL_OVERRIDE_AFTER_APSD_BIT);
+	if (rc < 0) {
+		dev_err(chg->dev, "Couldn't set default USBIN_LOAD_CFG_REG rc=%d\n", rc);
+	}
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 start */
+#ifndef HQ_BUILD_FACTORY
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 start */	                                                                                                                                   //reg=1370 bit7-bit0
+	rc = smblib_read(chg, USBIN_CURRENT_LIMIT_CFG_REG, &USBIN_cc);   //reg=1370    usb in current
+	if (rc < 0)
+		printk("%s: Couldn't read fast_CURRENT_LIMIT_CFG_REG\n", __func__);
+	printk("asus_insertion_initial_setting USBIN_cc1=0x%x\n",USBIN_cc);
+	rc = smblib_masked_write(chg, USBIN_CURRENT_LIMIT_CFG_REG,
+			USBIN_CURRENT_LIMIT_MASK, 0x14);
+	if (rc < 0)
+			CHG_DBG_E("%s: Failed to set USBIN_CURRENT_LIMIT\n", __func__);
+	rc = smblib_read(chg, USBIN_CURRENT_LIMIT_CFG_REG, &USBIN_cc);   //reg=1370    usb in current
+	if (rc < 0)
+		printk("%s: Couldn't read fast_CURRENT_LIMIT_CFG_REG\n", __func__);
+	printk("asus_insertion_initial_setting USBIN_cc2=0x%x\n",USBIN_cc);
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 end */
+#endif
+/* Huaqin add for ZQL1650-1287 factory version remove before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/5/8 end */
+}
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 end */
 
 int smblib_get_prop_slave_current_now(struct smb_charger *chg,
 		union power_supply_propval *pval)
@@ -3253,8 +4548,35 @@ static void smblib_micro_usb_plugin(struct smb_charger *chg, bool vbus_rising)
 	if (vbus_rising) {
 		/* use the typec flag even though its not typec */
 		chg->typec_present = 1;
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 start */
+		printk("enter smblib_micro_usb_plugin vbus_rising=1\n");
+		if (!asus_flow_processing) {
+			asus_flow_processing = 1;
+			printk("enter smblib_micro_usb_plugin !asus_flow_processing=1\n");
+			//schedule_delayed_work(&smbchg_dev->asus_set_flow_flag_work, msecs_to_jiffies(2000));         //TYPE-C
+			asus_insertion_initial_settings(smbchg_dev);
+			asus_smblib_stay_awake(smbchg_dev);
+			#if 0
+			if (g_Charger_mode)
+				schedule_delayed_work(&smbchg_dev->asus_chg_flow_work, msecs_to_jiffies(12500));
+			else
+				schedule_delayed_work(&smbchg_dev->asus_chg_flow_work, msecs_to_jiffies(12000));
+			#endif
+			#if 0
+			printk("will enter smblib_asus_monitor_start\n");
+			smblib_asus_monitor_start(smbchg_dev, 10000);
+			#endif
+			printk("will enter asus_chg_flow_work\n");
+			schedule_delayed_work(&smbchg_dev->asus_chg_flow_work, msecs_to_jiffies(12000));
+		//Huaqin added by tangqingyong at 20180324  start
+			asus_update_usb_connector_state(smbchg_dev);
+		//Huaqin added by tangqingyong at 20180324  end
+		}
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 end */
 	} else {
 		chg->typec_present = 0;
+		printk("enter smblib_micro_usb_plugin vbus_rising=0\n");
+		asus_flow_processing = 0;
 		smblib_update_usb_type(chg);
 		extcon_set_cable_state_(chg->extcon, EXTCON_USB, false);
 		smblib_uusb_removal(chg);
@@ -3323,8 +4645,7 @@ void smblib_usb_plugin_locked(struct smb_charger *chg)
 		rc = smblib_request_dpdm(chg, true);
 		if (rc < 0)
 			smblib_err(chg, "Couldn't to enable DPDM rc=%d\n", rc);
-		if (chg->fcc_stepper_mode)
-			vote(chg->fcc_votable, FCC_STEPPER_VOTER, false, 0);
+
 		/* Schedule work to enable parallel charger */
 		vote(chg->awake_votable, PL_DELAY_VOTER, true, 0);
 		schedule_delayed_work(&chg->pl_enable_work,
@@ -3343,16 +4664,13 @@ void smblib_usb_plugin_locked(struct smb_charger *chg)
 			}
 		}
 
-		/* Force 1500mA FCC on removal */
-		if (chg->fcc_stepper_mode)
-			vote(chg->fcc_votable, FCC_STEPPER_VOTER,
-						true, 1500000);
-
 		rc = smblib_request_dpdm(chg, false);
 		if (rc < 0)
 			smblib_err(chg, "Couldn't disable DPDM rc=%d\n", rc);
 	}
-
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 start */
+	printk("smblib_usb_plugin_locked will enter micro_usb_mode\n");
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 end */
 	if (chg->micro_usb_mode)
 		smblib_micro_usb_plugin(chg, vbus_rising);
 
@@ -3580,14 +4898,6 @@ static void smblib_handle_hvdcp_check_timeout(struct smb_charger *chg,
 			/* enforce DCP ICL if specified */
 			vote(chg->usb_icl_votable, DCP_VOTER,
 				chg->dcp_icl_ua != -EINVAL, chg->dcp_icl_ua);
-
-		/*
-		 * if pd is not allowed, then set pd_active = false right here,
-		 * so that it starts the hvdcp engine
-		 */
-		if (!get_effective_result(chg->pd_allowed_votable) &&
-				!chg->micro_usb_mode)
-			__smblib_set_prop_pd_active(chg, 0);
 	}
 
 	smblib_dbg(chg, PR_INTERRUPT, "IRQ: smblib_handle_hvdcp_check_timeout %s\n",
@@ -3611,7 +4921,10 @@ static void smblib_force_legacy_icl(struct smb_charger *chg, int pst)
 {
 	int typec_mode;
 	int rp_ua;
-
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 start */
+	u8 USBIN_1_cc;
+	int rc;
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 end */
 	/* while PD is active it should have complete ICL control */
 	if (chg->pd_active)
 		return;
@@ -3633,8 +4946,20 @@ static void smblib_force_legacy_icl(struct smb_charger *chg, int pst)
 		break;
 	case POWER_SUPPLY_TYPE_USB_DCP:
 		typec_mode = smblib_get_prop_typec_mode(chg);
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 start */
+		rc = smblib_read(chg, USBIN_CURRENT_LIMIT_CFG_REG, &USBIN_1_cc);   //reg=1370
+		if (rc < 0)
+			printk("%s: Couldn't read fast_CURRENT_LIMIT_CFG_REG\n", __func__);
+		printk("smblib_force_legacy_icl USBIN_7_cc=0x%x\n",USBIN_1_cc);
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 end */
 		rp_ua = get_rp_based_dcp_current(chg, typec_mode);
 		vote(chg->usb_icl_votable, LEGACY_UNKNOWN_VOTER, true, rp_ua);
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 start */
+		rc = smblib_read(chg, USBIN_CURRENT_LIMIT_CFG_REG, &USBIN_1_cc);   //reg=1370
+		if (rc < 0)
+			printk("%s: Couldn't read fast_CURRENT_LIMIT_CFG_REG\n", __func__);
+		printk("smblib_force_legacy_icl USBIN_8_cc=0x%x\n",USBIN_1_cc);
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 end */
 		break;
 	case POWER_SUPPLY_TYPE_USB_FLOAT:
 		/*
@@ -3691,8 +5016,10 @@ static void smblib_handle_apsd_done(struct smb_charger *chg, bool rising)
 	apsd_result = smblib_update_usb_type(chg);
 
 	if (!chg->typec_legacy_valid)
+	{
 		smblib_force_legacy_icl(chg, apsd_result->pst);
-
+		printk("smblib_handle_apsd_done--> smblib_force_legacy_icl has done\n");
+	}
 	switch (apsd_result->bit) {
 	case SDP_CHARGER_BIT:
 	case CDP_CHARGER_BIT:
@@ -3778,165 +5105,8 @@ irqreturn_t smblib_handle_usb_source_change(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static int typec_try_sink(struct smb_charger *chg)
-{
-	union power_supply_propval val;
-	bool debounce_done, vbus_detected, sink;
-	u8 stat;
-	int exit_mode = ATTACHED_SRC, rc;
-
-	/* ignore typec interrupt while try.snk WIP */
-	chg->try_sink_active = true;
-
-	/* force SNK mode */
-	val.intval = POWER_SUPPLY_TYPEC_PR_SINK;
-	rc = smblib_set_prop_typec_power_role(chg, &val);
-	if (rc < 0) {
-		smblib_err(chg, "Couldn't set UFP mode rc=%d\n", rc);
-		goto try_sink_exit;
-	}
-
-	/* reduce Tccdebounce time to ~20ms */
-	rc = smblib_masked_write(chg, MISC_CFG_REG,
-			TCC_DEBOUNCE_20MS_BIT, TCC_DEBOUNCE_20MS_BIT);
-	if (rc < 0) {
-		smblib_err(chg, "Couldn't set MISC_CFG_REG rc=%d\n", rc);
-		goto try_sink_exit;
-	}
-
-	/*
-	 * give opportunity to the other side to be a SRC,
-	 * for tDRPTRY + Tccdebounce time
-	 */
-	msleep(120);
-
-	rc = smblib_read(chg, TYPE_C_STATUS_4_REG, &stat);
-	if (rc < 0) {
-		smblib_err(chg, "Couldn't read TYPE_C_STATUS_4 rc=%d\n",
-				rc);
-		goto try_sink_exit;
-	}
-
-	debounce_done = stat & TYPEC_DEBOUNCE_DONE_STATUS_BIT;
-
-	if (!debounce_done)
-		/*
-		 * The other side didn't switch to source, either it
-		 * is an adamant sink or is removed go back to showing Rp
-		 */
-		goto try_wait_src;
-
-	/*
-	 * We are in force sink mode and the other side has switched to
-	 * showing Rp. Config DRP in case the other side removes Rp so we
-	 * can quickly (20ms) switch to showing our Rp. Note that the spec
-	 * needs us to show Rp for 80mS while the drp DFP residency is just
-	 * 54mS. But 54mS is plenty time for us to react and force Rp for
-	 * the remaining 26mS.
-	 */
-	val.intval = POWER_SUPPLY_TYPEC_PR_DUAL;
-	rc = smblib_set_prop_typec_power_role(chg, &val);
-	if (rc < 0) {
-		smblib_err(chg, "Couldn't set DFP mode rc=%d\n",
-				rc);
-		goto try_sink_exit;
-	}
-
-	/*
-	 * while other side is Rp, wait for VBUS from it; exit if other side
-	 * removes Rp
-	 */
-	do {
-		rc = smblib_read(chg, TYPE_C_STATUS_4_REG, &stat);
-		if (rc < 0) {
-			smblib_err(chg, "Couldn't read TYPE_C_STATUS_4 rc=%d\n",
-					rc);
-			goto try_sink_exit;
-		}
-
-		debounce_done = stat & TYPEC_DEBOUNCE_DONE_STATUS_BIT;
-		vbus_detected = stat & TYPEC_VBUS_STATUS_BIT;
-
-		/* Successfully transitioned to ATTACHED.SNK */
-		if (vbus_detected && debounce_done) {
-			exit_mode = ATTACHED_SINK;
-			goto try_sink_exit;
-		}
-
-		/*
-		 * Ensure sink since drp may put us in source if other
-		 * side switches back to Rd
-		 */
-		sink = !(stat &  UFP_DFP_MODE_STATUS_BIT);
-
-		usleep_range(1000, 2000);
-	} while (debounce_done && sink);
-
-try_wait_src:
-	/*
-	 * Transition to trywait.SRC state. check if other side still wants
-	 * to be SNK or has been removed.
-	 */
-	val.intval = POWER_SUPPLY_TYPEC_PR_SOURCE;
-	rc = smblib_set_prop_typec_power_role(chg, &val);
-	if (rc < 0) {
-		smblib_err(chg, "Couldn't set UFP mode rc=%d\n", rc);
-		goto try_sink_exit;
-	}
-
-	/* Need to be in this state for tDRPTRY time, 75ms~150ms */
-	msleep(80);
-
-	rc = smblib_read(chg, TYPE_C_STATUS_4_REG, &stat);
-	if (rc < 0) {
-		smblib_err(chg, "Couldn't read TYPE_C_STATUS_4 rc=%d\n", rc);
-		goto try_sink_exit;
-	}
-
-	debounce_done = stat & TYPEC_DEBOUNCE_DONE_STATUS_BIT;
-
-	if (debounce_done)
-		/* the other side wants to be a sink */
-		exit_mode = ATTACHED_SRC;
-	else
-		/* the other side is detached */
-		exit_mode = UNATTACHED_SINK;
-
-try_sink_exit:
-	/* release forcing of SRC/SNK mode */
-	val.intval = POWER_SUPPLY_TYPEC_PR_DUAL;
-	rc = smblib_set_prop_typec_power_role(chg, &val);
-	if (rc < 0)
-		smblib_err(chg, "Couldn't set DFP mode rc=%d\n", rc);
-
-	/* revert Tccdebounce time back to ~120ms */
-	rc = smblib_masked_write(chg, MISC_CFG_REG, TCC_DEBOUNCE_20MS_BIT, 0);
-	if (rc < 0)
-		smblib_err(chg, "Couldn't set MISC_CFG_REG rc=%d\n", rc);
-
-	chg->try_sink_active = false;
-
-	return exit_mode;
-}
-
 static void typec_sink_insertion(struct smb_charger *chg)
 {
-	int exit_mode;
-
-	/*
-	 * Try.SNK entry status - ATTACHWAIT.SRC state and detected Rd-open
-	 * or RD-Ra for TccDebounce time.
-	 */
-
-	if (*chg->try_sink_enabled) {
-		exit_mode = typec_try_sink(chg);
-
-		if (exit_mode != ATTACHED_SRC) {
-			smblib_usb_typec_change(chg);
-			return;
-		}
-	}
-
 	/* when a sink is inserted we should not wait on hvdcp timeout to
 	 * enable pd
 	 */
@@ -4013,7 +5183,6 @@ static void smblib_handle_typec_removal(struct smb_charger *chg)
 	vote(chg->pl_enable_votable_indirect, USBIN_V_VOTER, false, 0);
 	vote(chg->awake_votable, PL_DELAY_VOTER, false, 0);
 
-	vote(chg->usb_icl_votable, USBIN_USBIN_BOOST_VOTER, false, 0);
 	chg->vconn_attempts = 0;
 	chg->otg_attempts = 0;
 	chg->pulse_cnt = 0;
@@ -4071,13 +5240,10 @@ static void smblib_handle_typec_removal(struct smb_charger *chg)
 	if (rc < 0)
 		smblib_err(chg, "Couldn't enable HW cc_out rc=%d\n", rc);
 
-	/* restore crude sensor if PM660/PMI8998 */
-	if (chg->wa_flags & TYPEC_PBS_WA_BIT) {
-		rc = smblib_write(chg, TM_IO_DTEST4_SEL, 0xA5);
-		if (rc < 0)
-			smblib_err(chg, "Couldn't restore crude sensor rc=%d\n",
-				rc);
-	}
+	/* restore crude sensor */
+	rc = smblib_write(chg, TM_IO_DTEST4_SEL, 0xA5);
+	if (rc < 0)
+		smblib_err(chg, "Couldn't restore crude sensor rc=%d\n", rc);
 
 	mutex_lock(&chg->vconn_oc_lock);
 	if (!chg->vconn_en)
@@ -4134,6 +5300,10 @@ static void smblib_handle_typec_insertion(struct smb_charger *chg)
 static void smblib_handle_rp_change(struct smb_charger *chg, int typec_mode)
 {
 	int rp_ua;
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 start */
+	u8 USBIN_1_cc;
+	int rc;
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 end */
 	const struct apsd_result *apsd = smblib_get_apsd_result(chg);
 
 	if ((apsd->pst != POWER_SUPPLY_TYPE_USB_DCP)
@@ -4165,9 +5335,20 @@ static void smblib_handle_rp_change(struct smb_charger *chg, int typec_mode)
 	 */
 	smblib_dbg(chg, PR_MISC, "CC change old_mode=%d new_mode=%d\n",
 						chg->typec_mode, typec_mode);
-
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 start */
+	rc = smblib_read(chg, USBIN_CURRENT_LIMIT_CFG_REG, &USBIN_1_cc);   //reg=1370
+	if (rc < 0)
+			printk("%s: Couldn't read fast_CURRENT_LIMIT_CFG_REG\n", __func__);
+	printk("smblib_handle_rp_change USBIN_5_cc=0x%x\n",USBIN_1_cc);
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 end */
 	rp_ua = get_rp_based_dcp_current(chg, typec_mode);
 	vote(chg->usb_icl_votable, LEGACY_UNKNOWN_VOTER, true, rp_ua);
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 start */
+	rc = smblib_read(chg, USBIN_CURRENT_LIMIT_CFG_REG, &USBIN_1_cc);   //reg=1370
+	if (rc < 0)
+			printk("%s: Couldn't read fast_CURRENT_LIMIT_CFG_REG\n", __func__);
+	printk("smblib_handle_rp_change USBIN_6_cc=0x%x\n",USBIN_1_cc);
+/* Huaqin add for ZQL1650-71 before BC1.2 500mA before adapter id 1000mA by fangaijun at 2018/4/4 end */
 }
 
 static void smblib_handle_typec_cc_state_change(struct smb_charger *chg)
@@ -4199,7 +5380,7 @@ static void smblib_handle_typec_cc_state_change(struct smb_charger *chg)
 				smblib_typec_mode_name[chg->typec_mode]);
 }
 
-void smblib_usb_typec_change(struct smb_charger *chg)
+static void smblib_usb_typec_change(struct smb_charger *chg)
 {
 	int rc;
 
@@ -4235,9 +5416,8 @@ irqreturn_t smblib_handle_usb_typec_change(int irq, void *data)
 		return IRQ_HANDLED;
 	}
 
-	if (chg->cc2_detach_wa_active || chg->typec_en_dis_active ||
-					 chg->try_sink_active) {
-		smblib_dbg(chg, PR_MISC | PR_INTERRUPT, "Ignoring since %s active\n",
+	if (chg->cc2_detach_wa_active || chg->typec_en_dis_active) {
+		smblib_dbg(chg, PR_INTERRUPT, "Ignoring since %s active\n",
 			chg->cc2_detach_wa_active ?
 			"cc2_detach_wa" : "typec_en_dis");
 		return IRQ_HANDLED;
@@ -4264,14 +5444,6 @@ irqreturn_t smblib_handle_high_duty_cycle(int irq, void *data)
 	struct smb_charger *chg = irq_data->parent_data;
 
 	chg->is_hdc = true;
-	/*
-	 * Disable usb IRQs after the flag set and re-enable IRQs after
-	 * the flag cleared in the delayed work queue, to avoid any IRQ
-	 * storming during the delays
-	 */
-	if (chg->irq_info[HIGH_DUTY_CYCLE_IRQ].irq)
-		disable_irq_nosync(chg->irq_info[HIGH_DUTY_CYCLE_IRQ].irq);
-
 	schedule_delayed_work(&chg->clear_hdc_work, msecs_to_jiffies(60));
 
 	return IRQ_HANDLED;
@@ -4449,8 +5621,6 @@ static void clear_hdc_work(struct work_struct *work)
 						clear_hdc_work.work);
 
 	chg->is_hdc = 0;
-	if (chg->irq_info[HIGH_DUTY_CYCLE_IRQ].irq)
-		enable_irq(chg->irq_info[HIGH_DUTY_CYCLE_IRQ].irq);
 }
 
 static void rdstd_cc2_detach_work(struct work_struct *work)
@@ -4748,9 +5918,7 @@ static void smblib_legacy_detection_work(struct work_struct *work)
 		smblib_err(chg, "Couldn't disable type-c rc=%d\n", rc);
 
 	/* wait for the adapter to turn off VBUS */
-	msleep(1000);
-
-	smblib_dbg(chg, PR_MISC, "legacy workaround enabling typec\n");
+	msleep(500);
 
 	rc = smblib_masked_write(chg,
 				TYPE_C_INTRPT_ENB_SOFTWARE_CTRL_REG,
@@ -4759,7 +5927,7 @@ static void smblib_legacy_detection_work(struct work_struct *work)
 		smblib_err(chg, "Couldn't enable type-c rc=%d\n", rc);
 
 	/* wait for type-c detection to complete */
-	msleep(400);
+	msleep(100);
 
 	rc = smblib_read(chg, TYPE_C_STATUS_5_REG, &stat);
 	if (rc < 0) {
@@ -4771,8 +5939,6 @@ static void smblib_legacy_detection_work(struct work_struct *work)
 	vote(chg->usb_icl_votable, LEGACY_UNKNOWN_VOTER, false, 0);
 	legacy = stat & TYPEC_LEGACY_CABLE_STATUS_BIT;
 	rp_high = chg->typec_mode == POWER_SUPPLY_TYPEC_SOURCE_HIGH;
-	smblib_dbg(chg, PR_MISC, "legacy workaround done legacy = %d rp_high = %d\n",
-			legacy, rp_high);
 	if (!legacy || !rp_high)
 		vote(chg->hvdcp_disable_votable_indirect, VBUS_CC_SHORT_VOTER,
 								false, 0);
@@ -4982,6 +6148,17 @@ int smblib_init(struct smb_charger *chg)
 	INIT_WORK(&chg->rdstd_cc2_detach_work, rdstd_cc2_detach_work);
 	INIT_DELAYED_WORK(&chg->hvdcp_detect_work, smblib_hvdcp_detect_work);
 	INIT_DELAYED_WORK(&chg->clear_hdc_work, clear_hdc_work);
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 start */
+	INIT_DELAYED_WORK(&chg->asus_chg_flow_work, asus_chg_flow_work);
+	INIT_DELAYED_WORK(&chg->asus_adapter_adc_work, asus_adapter_adc_work);
+/* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 end */
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 start */
+	INIT_DELAYED_WORK(&chg->asus_min_monitor_work, asus_min_monitor_work);
+/* Huaqin add for ZQL1650-68 Realize jeita function by fangaijun at 2018/02/03 end */
+/* Huaqin add for ZQL1650-68 systme suspend 1 min run sw jeita by fangaijun at 2018/02/06 start */
+	INIT_DELAYED_WORK(&chg->asus_batt_RTC_work, asus_batt_RTC_work);
+	alarm_init(&bat_alarm, ALARM_REALTIME, batAlarm_handler);
+/* Huaqin add for ZQL1650-68 systme suspend 1 min run sw jeita by fangaijun at 2018/02/06 end */
 	INIT_WORK(&chg->otg_oc_work, smblib_otg_oc_work);
 	INIT_WORK(&chg->vconn_oc_work, smblib_vconn_oc_work);
 	INIT_DELAYED_WORK(&chg->otg_ss_done_work, smblib_otg_ss_done_work);
