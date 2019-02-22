@@ -40,7 +40,7 @@
 #include <linux/fb.h>
 #include <linux/pm_qos.h>
 #include <linux/cpufreq.h>
-#include <linux/wakelock.h>
+// #include <linux/wakelock.h>
 #include <linux/cpu_input_boost.h>
 #include <linux/devfreq_boost.h>
 #include <linux/display_state.h>
@@ -76,7 +76,7 @@ static int SPIDEV_MAJOR;
 static DECLARE_BITMAP(minors, N_SPI_MINORS);
 static LIST_HEAD(device_list);
 static DEFINE_MUTEX(device_list_lock);
-static struct wake_lock fp_wakelock;
+static struct wakeup_source fp_wakelock;
 static struct gf_dev gf;
 
 struct gf_key_map maps[] = {
@@ -501,7 +501,7 @@ static irqreturn_t gf_irq(int irq, void *handle)
 		devfreq_boost_kick_wake(DEVFREQ_MSM_CPUBW);
 	}
 	char temp = GF_NET_EVENT_IRQ;
-	wake_lock_timeout(&fp_wakelock, msecs_to_jiffies(WAKELOCK_HOLD_TIME));
+	__pm_wakeup_event(&fp_wakelock, WAKELOCK_HOLD_TIME);
 	sendnlmsg(&temp);
 #elif defined (GF_FASYNC)
 	struct gf_dev *gf_dev = &gf;
@@ -762,7 +762,7 @@ static int gf_probe(struct platform_device *pdev)
 #ifndef USE_COMMON_FP
 	gf_dev->irq = gf_irq_num(gf_dev);
 #endif
-	wake_lock_init(&fp_wakelock, WAKE_LOCK_SUSPEND, "fp_wakelock");
+	wakeup_source_init(&fp_wakelock, "fp_wakelock");
 
 
 	pr_info("version V%d.%d.%02d\n", VER_MAJOR, VER_MINOR, PATCH_LEVEL);
@@ -802,7 +802,7 @@ static int gf_remove(struct platform_device *pdev)
 {
 	struct gf_dev *gf_dev = &gf;
 
-	wake_lock_destroy(&fp_wakelock);
+	wakeup_source_trash(&fp_wakelock);
 	/* make sure ops on existing fds can abort cleanly */
 	if (gf_dev->irq)
 		free_irq(gf_dev->irq, gf_dev);
