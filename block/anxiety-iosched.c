@@ -18,7 +18,7 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/init.h>
-#include <linux/state_notifier.h>
+#include <linux/display_state.h>
 
 /* Default tunable values */
 #define	DEFAULT_MAX_WRITES_STARVED		8	/* Max times reads can starve a write */
@@ -41,7 +41,7 @@ static void anxiety_merged_requests(struct request_queue *q, struct request *rq,
 static __always_inline struct request *anxiety_choose_request(struct anxiety_data *mdata)
 {
 	/* Prioritize reads unless writes are exceedingly starved */
-	bool starved = mdata->writes_starved > (state_suspended ? mdata->max_writes_starved_suspended : mdata->max_writes_starved);
+	bool starved = mdata->writes_starved > (!is_display_on() ? mdata->max_writes_starved_suspended : mdata->max_writes_starved);
 
 	/* Handle a read request */
 	if (!starved && !list_empty(&mdata->queue[READ])) {
