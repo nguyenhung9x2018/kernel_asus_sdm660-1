@@ -116,3 +116,7 @@ all.config
 
 # Huaqin, stop being retard by doing all kernel stuffs on Windows
 !.gitattributes
+
+# don't add build script
+darkonah.sh
+dx.sh
