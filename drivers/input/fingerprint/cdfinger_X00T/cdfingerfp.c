@@ -40,6 +40,9 @@
 #include <linux/regulator/consumer.h>
 #include <linux/fb.h>
 #include <linux/notifier.h>
+#include <linux/cpu_input_boost.h>
+#include <linux/devfreq_boost.h>
+#include <linux/display_state.h>
 /* Huaqin modify for cpu_boost by leiyu at 2018/04/25 start */
 #include <linux/sched.h>
 /* Huaqin modify for cpu_boost by leiyu at 2018/04/25 end */
@@ -421,6 +424,12 @@ static irqreturn_t cdfinger_eint_handler(int irq, void *dev_id)
 		cdfinger_wake_lock(pdata,1);
 		cdfinger_async_report();
 	}
+
+	if (!is_display_on()) {
+		cpu_input_boost_kick_wake();
+		devfreq_boost_kick_wake(DEVFREQ_MSM_CPUBW);
+	}
+
 	return IRQ_HANDLED;
 }
 
