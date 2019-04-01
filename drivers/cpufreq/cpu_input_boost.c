@@ -12,6 +12,7 @@
 #include <linux/input.h>
 #include <linux/moduleparam.h>
 #include <linux/slab.h>
+#include <linux/version.h>
 
 unsigned long last_input_time;
 
