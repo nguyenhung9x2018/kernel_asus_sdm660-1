@@ -3538,7 +3538,7 @@ int smbchg_jeita_judge_state(int old_State, int batt_tempr)
 		result_State = JEITA_STATE_RANGE_100_to_500;
 	/* 50 <= batt_tempr < 60 */
 	} else if (batt_tempr < 600) {
-		result_State = JEITA_STATE_RANGE_500_to_600;
+		result_State = JEITA_STATE_RANGE_100_to_500;
 	/* 60 <= batt_tempr */
 	} else
 		result_State = JEITA_STATE_LARGER_THAN_600;
