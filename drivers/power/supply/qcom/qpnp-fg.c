@@ -2503,7 +2503,7 @@ static int estimate_battery_age(struct fg_chip *chip, int *actual_capacity)
 	fg_mem_lock(chip);
 
 	batt_temp = get_sram_prop_now(chip, FG_DATA_BATT_TEMP);
-	if (batt_temp < 150 || batt_temp > 430) {
+	if (batt_temp < 150 || batt_temp > 400) {
 		if (fg_debug_mask & FG_AGING)
 			pr_info("Battery temp (%d) out of range, aborting\n",
 					(int)batt_temp);
