@@ -711,6 +711,9 @@ static int cpu_power_select(struct cpuidle_device *dev,
 	if ((sleep_disabled && !cpu_isolated(dev->cpu)) || sleep_us  < 0)
 		return 0;
 
+	if (sleep_disabled)
+		return 0;
+
 	idx_restrict = cpu->nlevels + 1;
 
 	next_event_us = (uint32_t)(ktime_to_us(get_next_event_time(dev->cpu)));
