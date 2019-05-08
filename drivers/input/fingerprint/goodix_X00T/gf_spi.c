@@ -495,8 +495,6 @@ static long gf_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long a
 static irqreturn_t gf_irq(int irq, void *handle)
 {
 #if defined(GF_NETLINK_ENABLE)
-	cpu_input_boost_kick_wake();
-	devfreq_boost_kick_wake(DEVFREQ_MSM_CPUBW);
 	char temp = GF_NET_EVENT_IRQ;
 	__pm_wakeup_event(&fp_wakelock, WAKELOCK_HOLD_TIME);
 	sendnlmsg(&temp);
@@ -505,6 +503,8 @@ static irqreturn_t gf_irq(int irq, void *handle)
 	if (gf_dev->async)
 		kill_fasync(&gf_dev->async, SIGIO, POLL_IN);
 #endif
+	cpu_input_boost_kick_wake();
+	devfreq_boost_kick_wake(DEVFREQ_MSM_CPUBW);
 
 	return IRQ_HANDLED;
 }
